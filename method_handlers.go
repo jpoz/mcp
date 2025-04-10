@@ -37,9 +37,20 @@ func (s *Server) handleInitialize(ctx context.Context, session *Session, params 
 		ServerInfo:      s.serverInfo,
 	}
 
+	session.State = SessionStateInitializing
+
 	s.slog.Info("Client initialized", "clientInfo", initParams.ClientInfo, "protocolVersion", negotiatedVersion, "sessionID", session.ID)
 
 	return result, nil
+}
+
+// handleInitializeNotification handles the notifications/initialized method
+func (s *Server) handleInitializeNotification(ctx context.Context, session *Session, params json.RawMessage) (any, error) {
+	s.slog.Info("Client initialized notification received", "sessionID", session.ID)
+
+	session.State = SessionStateInitialized
+
+	return struct{}{}, nil
 }
 
 func (s *Server) handlePing(ctx context.Context, session *Session, params json.RawMessage) (any, error) {
@@ -316,6 +327,7 @@ func (s *Server) handleToolsCallWithEvents(ctx context.Context, session *Session
 	var callParams CallParams
 
 	if err := json.Unmarshal(req.Params, &callParams); err != nil {
+		s.slog.Error("Failed to unmarshal parameters", "error", err, "sessionID", session.ID)
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
@@ -328,6 +340,7 @@ func (s *Server) handleToolsCallWithEvents(ctx context.Context, session *Session
 	s.mu.RUnlock()
 
 	if handler == nil {
+		s.slog.Error("Tools not supported", "sessionID", session.ID)
 		return nil, errors.New("tools not supported")
 	}
 

@@ -108,6 +108,9 @@ func (s *Server) handleSingleRequest(w http.ResponseWriter, session *Session, re
 	case req.Method == "initialize":
 		result, err = s.handleInitialize(ctx, session, req.Params)
 
+	case req.Method == "notifications/initialized":
+		result, err = s.handleInitializeNotification(ctx, session, req.Params)
+
 	case req.Method == "ping":
 		result, err = s.handlePing(ctx, session, req.Params)
 
@@ -129,7 +132,7 @@ func (s *Server) handleSingleRequest(w http.ResponseWriter, session *Session, re
 
 	// Unknown method
 	default:
-		err = fmt.Errorf("method not found: %s", req.Method)
+		err = fmt.Errorf("json-rpc method not found: %s", req.Method)
 	}
 
 	// Send response
@@ -229,6 +232,9 @@ func (s *Server) handleRequestWithEvents(w http.ResponseWriter, r *http.Request,
 				continue
 			}
 
+			s.slog.Debug("Sending event", "data", string(data))
+
+			w.WriteHeader(http.StatusAccepted)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 
@@ -252,6 +258,9 @@ func (s *Server) handleRequestWithEvents(w http.ResponseWriter, r *http.Request,
 			}
 
 			data, _ := json.Marshal(errResp)
+
+			s.slog.Error("Sending error", "data", string(data))
+
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 			return

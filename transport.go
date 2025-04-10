@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // StreamableHTTP implements the MCP Streamable HTTP transport

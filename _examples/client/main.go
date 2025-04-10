@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
@@ -27,6 +28,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Create a reader for user input
+	reader := bufio.NewReader(os.Stdin)
+
+	// Function to wait for user to press Enter
+	waitForEnter := func(message string) {
+		fmt.Printf("%s (press Enter to continue)...", message)
+		_, _ = reader.ReadString('\n')
+	}
+
 	// Handle Ctrl+C to gracefully exit
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
@@ -37,6 +47,7 @@ func main() {
 	}()
 
 	// Initialize the client
+	waitForEnter("Ready to initialize client")
 	fmt.Println("Initializing client...")
 	err := client.Initialize(ctx, mcp.ClientInfo{
 		Name:    "MCP Example Client",
@@ -59,7 +70,8 @@ func main() {
 	}
 
 	// Send a ping
-	fmt.Println("\nSending ping...")
+	waitForEnter("\nReady to send ping")
+	fmt.Println("Sending ping...")
 	if err := client.Ping(ctx); err != nil {
 		fmt.Printf("Ping failed: %v\n", err)
 	} else {
@@ -68,7 +80,8 @@ func main() {
 
 	// Try to list roots if supported
 	if _, ok := capabilities["roots"]; ok {
-		fmt.Println("\nListing roots...")
+		waitForEnter("\nReady to list roots")
+		fmt.Println("Listing roots...")
 		roots, err := client.ListRoots(ctx)
 		if err != nil {
 			fmt.Printf("Failed to list roots: %v\n", err)
@@ -102,7 +115,8 @@ func main() {
 
 	// Try to use sampling if supported
 	if _, ok := capabilities["sampling"]; ok {
-		fmt.Println("\nSending sampling request...")
+		waitForEnter("\nReady to send sampling request")
+		fmt.Println("Sending sampling request...")
 
 		// Create a message
 		params := mcp.CreateMessageParams{
@@ -150,16 +164,17 @@ func main() {
 			fmt.Printf("Stop reason: %s\n", result.StopReason)
 		}
 	}
-	
+
 	// Check if tools capability is available and get weather for zip 80027
 	if _, ok := capabilities["tools"]; ok {
-		fmt.Println("\nCalling get_weather tool for zip 80027...")
-		
+		waitForEnter("\nReady to call get_weather tool")
+		fmt.Println("Calling get_weather tool for zip 80027...")
+
 		// Create the arguments for the tool
 		args := map[string]interface{}{
 			"location": "80027",
 		}
-		
+
 		// Call the tool
 		result, err := client.CallTool(ctx, "get_weather", args)
 		if err != nil {
@@ -180,7 +195,8 @@ func main() {
 	}
 
 	// Start listening for server-initiated messages
-	fmt.Println("\nListening for server messages...")
+	waitForEnter("\nReady to listen for server messages")
+	fmt.Println("Listening for server messages...")
 	msgChan, errChan := client.ListenForMessages(ctx)
 
 	// Wait for messages or context cancellation

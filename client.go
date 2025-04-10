@@ -82,7 +82,7 @@ func (c *Client) GetCapabilities() map[string]any {
 
 // GetSessionID returns the current session ID
 func (c *Client) GetSessionID() string {
-	return c.GetSessionID()
+	return c.transport.GetSessionID()
 }
 
 // nextID generates a unique request ID
@@ -96,9 +96,13 @@ func (c *Client) Initialize(ctx context.Context, clientInfo ClientInfo) error {
 		return errors.New("client already initialized")
 	}
 
+	// Latest supported protocol versions, in order of preference (latest first)
+	supportedVersions := []string{"2025-03-26", "2024-11-05"}
+	preferredVersion := supportedVersions[0]
+
 	// Prepare initialization request
 	params := map[string]any{
-		"protocolVersion": "2025-03-26", // Latest version from the spec
+		"protocolVersion": preferredVersion,
 		"capabilities": map[string]any{
 			// Declare client capabilities
 			"roots": map[string]any{
@@ -122,9 +126,59 @@ func (c *Client) Initialize(ctx context.Context, clientInfo ClientInfo) error {
 
 	// Check for errors in the response
 	if resp.Error != nil {
+		// Check if the error is about unsupported protocol version
+		if resp.Error.Code == -32602 {
+			var errorData struct {
+				Supported []string `json:"supported"`
+				Requested string   `json:"requested"`
+			}
+
+			if resp.Error.Data != nil {
+				dataBytes, err := json.Marshal(resp.Error.Data)
+				if err == nil {
+					if err := json.Unmarshal(dataBytes, &errorData); err == nil {
+						// Try to find a compatible version
+						for _, supportedByClient := range supportedVersions {
+							for _, supportedByServer := range errorData.Supported {
+								if supportedByClient == supportedByServer {
+									// Found a compatible version, retry initialization
+									c.mu.Lock()
+									c.nextRequestID = 1 // Reset request ID to ensure deterministic behavior
+									c.mu.Unlock()
+									
+									// Update params with compatible version
+									params["protocolVersion"] = supportedByClient
+									rawParams, _ = json.Marshal(params)
+									
+									// Send new initialization request
+									req = NewRequest(c.nextID(), "initialize", rawParams)
+									resp, err = c.transport.SendRequest(ctx, req)
+									if err != nil {
+										return fmt.Errorf("initialization retry failed: %w", err)
+									}
+									
+									// Check for errors in the retry response
+									if resp.Error != nil {
+										return fmt.Errorf("server returned error on retry: %d - %s", resp.Error.Code, resp.Error.Message)
+									}
+									
+									// Continue with successful response
+									goto ProcessSuccessfulResponse
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			return fmt.Errorf("no compatible protocol version found: server supports %v, client supports %v", 
+				errorData.Supported, supportedVersions)
+		}
+		
 		return fmt.Errorf("server returned error: %d - %s", resp.Error.Code, resp.Error.Message)
 	}
 
+ProcessSuccessfulResponse:
 	// Parse the result
 	var result struct {
 		ProtocolVersion string         `json:"protocolVersion"`
@@ -139,6 +193,19 @@ func (c *Client) Initialize(ctx context.Context, clientInfo ClientInfo) error {
 
 	if err := json.Unmarshal(resultBytes, &result); err != nil {
 		return fmt.Errorf("failed to unmarshal initialization result: %w", err)
+	}
+
+	// Verify the protocol version is supported
+	versionSupported := false
+	for _, version := range supportedVersions {
+		if result.ProtocolVersion == version {
+			versionSupported = true
+			break
+		}
+	}
+
+	if !versionSupported {
+		return fmt.Errorf("server negotiated unsupported protocol version: %s", result.ProtocolVersion)
 	}
 
 	// Store the results
