@@ -41,9 +41,6 @@ func (c *Client) CancelRequest(ctx context.Context, requestID any, reason string
 	return c.SendNotification(ctx, "notifications/cancelled", params)
 }
 
-// ProgressToken represents a token used for tracking progress
-type ProgressToken string
-
 // WithProgress adds a progress token to a request's parameters
 func WithProgress(params any, token ProgressToken) any {
 	if params == nil {

@@ -150,6 +150,34 @@ func main() {
 			fmt.Printf("Stop reason: %s\n", result.StopReason)
 		}
 	}
+	
+	// Check if tools capability is available and get weather for zip 80027
+	if _, ok := capabilities["tools"]; ok {
+		fmt.Println("\nCalling get_weather tool for zip 80027...")
+		
+		// Create the arguments for the tool
+		args := map[string]interface{}{
+			"location": "80027",
+		}
+		
+		// Call the tool
+		result, err := client.CallTool(ctx, "get_weather", args)
+		if err != nil {
+			fmt.Printf("Failed to call get_weather: %v\n", err)
+		} else {
+			fmt.Println("\nWeather result:")
+			for _, content := range result.Content {
+				if content.Type == "text" {
+					fmt.Println(content.Text)
+				} else {
+					fmt.Printf("Content of type %s: %v\n", content.Type, content)
+				}
+			}
+			if result.IsError {
+				fmt.Println("Note: Result marked as error")
+			}
+		}
+	}
 
 	// Start listening for server-initiated messages
 	fmt.Println("\nListening for server messages...")

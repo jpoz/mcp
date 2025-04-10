@@ -3,6 +3,8 @@ package mcp
 
 import (
 	"fmt"
+	"log/slog"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -31,6 +33,9 @@ type Server struct {
 
 	// Synchronization
 	mu sync.RWMutex
+
+	// logging
+	slog *slog.Logger
 }
 
 // ServerConfig contains configuration for the server
@@ -55,13 +60,12 @@ func NewServer(config ServerConfig) *Server {
 		sessions:            make(map[string]*Session),
 		notificationManager: NewNotificationManager(),
 		loggingManager:      NewLoggingManager(),
+		slog:                NewNoopLogger(),
 	}
 
 	// Copy capabilities
 	if config.Capabilities != nil {
-		for k, v := range config.Capabilities {
-			server.capabilities[k] = v
-		}
+		maps.Copy(server.capabilities, config.Capabilities)
 	}
 
 	return server
@@ -121,6 +125,10 @@ func (s *Server) SetToolsHandler(handler ToolsHandler) {
 	}
 }
 
+func (s *Server) SetLogger(logger *slog.Logger) {
+	s.slog = logger
+}
+
 // Start starts the server on the given address
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
@@ -143,6 +151,8 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Set session ID in response header
 	w.Header().Set("Mcp-Session-Id", session.ID)
+
+	s.slog.Info("Handling request", "method", r.Method, "sessionID", session.ID)
 
 	// Process the request based on method
 	switch r.Method {
@@ -181,12 +191,12 @@ func generateSessionID() string {
 }
 
 // SendNotification sends a notification to a specific session
-func (s *Server) SendNotification(sessionID string, method string, params interface{}) {
+func (s *Server) SendNotification(sessionID string, method string, params any) {
 	s.notificationManager.SendNotification(sessionID, method, params)
 }
 
 // BroadcastNotification sends a notification to all sessions
-func (s *Server) BroadcastNotification(method string, params interface{}) {
+func (s *Server) BroadcastNotification(method string, params any) {
 	s.notificationManager.BroadcastNotification(method, params)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/angellist/mcp" // Replace with your actual package import path
@@ -34,6 +35,8 @@ func main() {
 	}
 
 	server := mcp.NewServer(config)
+	server.SetLogger(slog.Default())
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	// Set up resource handler
 	resourceHandler := mcp.NewDefaultResourcesHandler()

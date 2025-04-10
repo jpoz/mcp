@@ -33,6 +33,11 @@ type Error struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+type CallParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments,omitempty"`
+}
+
 // NewRequest creates a new JSON-RPC 2.0 request
 func NewRequest(id any, method string, params json.RawMessage) *Request {
 	return &Request{
@@ -51,3 +56,28 @@ func NewNotification(method string, params any) *Notification {
 		Params:  params,
 	}
 }
+
+// ToolInfo contains information about a tool
+type ToolInfo struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"inputSchema"`
+}
+
+// ToolContent represents the content returned by a tool
+type ToolContent struct {
+	Type     string           `json:"type"`
+	Text     string           `json:"text,omitempty"`
+	Data     string           `json:"data,omitempty"`
+	MimeType string           `json:"mimeType,omitempty"`
+	Resource *ResourceContent `json:"resource,omitempty"`
+}
+
+// ToolResult contains the result of a tool call
+type ToolResult struct {
+	Content []ToolContent `json:"content"`
+	IsError bool          `json:"isError,omitempty"`
+}
+
+// ProgressToken is a token for tracking progress
+type ProgressToken string

@@ -8,7 +8,7 @@ import (
 )
 
 // handleInitialize handles the initialize method
-func (s *Server) handleInitialize(ctx context.Context, session *Session, params json.RawMessage) (interface{}, error) {
+func (s *Server) handleInitialize(ctx context.Context, session *Session, params json.RawMessage) (any, error) {
 	var initParams struct {
 		ProtocolVersion string         `json:"protocolVersion"`
 		Capabilities    map[string]any `json:"capabilities"`
@@ -37,7 +37,14 @@ func (s *Server) handleInitialize(ctx context.Context, session *Session, params 
 		ServerInfo:      s.serverInfo,
 	}
 
+	s.slog.Info("Client initialized", "clientInfo", initParams.ClientInfo, "protocolVersion", negotiatedVersion, "sessionID", session.ID)
+
 	return result, nil
+}
+
+func (s *Server) handlePing(ctx context.Context, session *Session, params json.RawMessage) (any, error) {
+	s.slog.Info("Ping received", "sessionID", session.ID)
+	return struct{}{}, nil
 }
 
 // handleResourcesMethod routes resource-related method calls
@@ -49,6 +56,8 @@ func (s *Server) handleResourcesMethod(ctx context.Context, session *Session, re
 	if handler == nil {
 		return nil, errors.New("resources not supported")
 	}
+
+	s.slog.Info("Handling resource method", "method", req.Method, "sessionID", session.ID)
 
 	switch req.Method {
 	case "resources/list":
@@ -68,12 +77,14 @@ func (s *Server) handleResourcesList(ctx context.Context, session *Session, para
 
 	if params != nil && len(params) > 0 {
 		if err := json.Unmarshal(params, &listParams); err != nil {
+			s.slog.Error("Failed to unmarshal parameters", "error", err, "sessionID", session.ID)
 			return nil, fmt.Errorf("invalid parameters: %w", err)
 		}
 	}
 
 	resources, nextCursor, err := s.resourcesHandler.List(ctx, listParams.Cursor)
 	if err != nil {
+		s.slog.Error("Failed to list resources", "error", err, "sessionID", session.ID)
 		return nil, err
 	}
 
@@ -85,6 +96,8 @@ func (s *Server) handleResourcesList(ctx context.Context, session *Session, para
 		NextCursor: nextCursor,
 	}
 
+	s.slog.Info("Resources listed", "count", len(resources), "nextCursor", nextCursor, "sessionID", session.ID)
+
 	return result, nil
 }
 
@@ -95,11 +108,13 @@ func (s *Server) handleResourcesRead(ctx context.Context, session *Session, para
 	}
 
 	if err := json.Unmarshal(params, &readParams); err != nil {
+		s.slog.Error("Failed to unmarshal parameters", "error", err, "sessionID", session.ID)
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
 	contents, err := s.resourcesHandler.Read(ctx, readParams.URI)
 	if err != nil {
+		s.slog.Error("Failed to read resource", "error", err, "uri", readParams.URI, "sessionID", session.ID)
 		return nil, err
 	}
 
@@ -108,6 +123,8 @@ func (s *Server) handleResourcesRead(ctx context.Context, session *Session, para
 	}{
 		Contents: contents,
 	}
+
+	s.slog.Info("Resource read", "uri", readParams.URI, "sessionID", session.ID)
 
 	return result, nil
 }
@@ -120,6 +137,7 @@ func (s *Server) handleResourcesSubscribe(ctx context.Context, session *Session,
 	s.mu.RUnlock()
 
 	if !ok || capabilities["subscribe"] != true {
+		s.slog.Error("Resource subscriptions not supported", "sessionID", session.ID)
 		return nil, errors.New("resource subscriptions not supported")
 	}
 
@@ -128,13 +146,15 @@ func (s *Server) handleResourcesSubscribe(ctx context.Context, session *Session,
 	}
 
 	if err := json.Unmarshal(params, &subParams); err != nil {
+		s.slog.Error("Failed to unmarshal parameters", "error", err, "sessionID", session.ID)
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
 	// Register subscription
 	// In a full implementation, you would track which sessions are subscribed to which resources
-
 	// Return empty result for successful subscription
+
+	s.slog.Info("Resource subscription registered", "uri", subParams.URI, "sessionID", session.ID)
 	return struct{}{}, nil
 }
 
@@ -145,8 +165,11 @@ func (s *Server) handlePromptsMethod(ctx context.Context, session *Session, req 
 	s.mu.RUnlock()
 
 	if handler == nil {
+		s.slog.Error("Prompts not supported", "sessionID", session.ID)
 		return nil, errors.New("prompts not supported")
 	}
+
+	s.slog.Info("Handling prompt method", "method", req.Method, "sessionID", session.ID)
 
 	switch req.Method {
 	case "prompts/list":
@@ -166,12 +189,14 @@ func (s *Server) handlePromptsList(ctx context.Context, session *Session, params
 
 	if params != nil && len(params) > 0 {
 		if err := json.Unmarshal(params, &listParams); err != nil {
+			s.slog.Error("Failed to unmarshal parameters", "error", err, "sessionID", session.ID)
 			return nil, fmt.Errorf("invalid parameters: %w", err)
 		}
 	}
 
 	prompts, nextCursor, err := s.promptsHandler.List(ctx, listParams.Cursor)
 	if err != nil {
+		s.slog.Error("Failed to list prompts", "error", err, "sessionID", session.ID)
 		return nil, err
 	}
 
@@ -182,6 +207,8 @@ func (s *Server) handlePromptsList(ctx context.Context, session *Session, params
 		Prompts:    prompts,
 		NextCursor: nextCursor,
 	}
+
+	s.slog.Info("Prompts listed", "count", len(prompts), "nextCursor", nextCursor, "sessionID", session.ID)
 
 	return result, nil
 }
@@ -194,11 +221,13 @@ func (s *Server) handlePromptsGet(ctx context.Context, session *Session, params 
 	}
 
 	if err := json.Unmarshal(params, &getParams); err != nil {
+		s.slog.Error("Failed to unmarshal parameters", "error", err, "sessionID", session.ID)
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
 	result, err := s.promptsHandler.Get(ctx, getParams.Name, getParams.Arguments)
 	if err != nil {
+		s.slog.Error("Failed to get prompt", "error", err, "name", getParams.Name, "sessionID", session.ID)
 		return nil, err
 	}
 
@@ -214,6 +243,8 @@ func (s *Server) handleToolsMethod(ctx context.Context, session *Session, req *R
 	if handler == nil {
 		return nil, errors.New("tools not supported")
 	}
+
+	s.slog.Info("Handling tool method", "method", req.Method, "sessionID", session.ID)
 
 	switch req.Method {
 	case "tools/list":
@@ -233,12 +264,14 @@ func (s *Server) handleToolsList(ctx context.Context, session *Session, params j
 
 	if params != nil && len(params) > 0 {
 		if err := json.Unmarshal(params, &listParams); err != nil {
+			s.slog.Error("Failed to unmarshal parameters", "error", err, "sessionID", session.ID)
 			return nil, fmt.Errorf("invalid parameters: %w", err)
 		}
 	}
 
 	tools, nextCursor, err := s.toolsHandler.List(ctx, listParams.Cursor)
 	if err != nil {
+		s.slog.Error("Failed to list tools", "error", err, "sessionID", session.ID)
 		return nil, err
 	}
 
@@ -250,34 +283,37 @@ func (s *Server) handleToolsList(ctx context.Context, session *Session, params j
 		NextCursor: nextCursor,
 	}
 
+	s.slog.Info("Tools listed", "count", len(tools), "nextCursor", nextCursor, "sessionID", session.ID)
+
 	return result, nil
 }
 
 // handleToolsCall handles the tools/call method
-func (s *Server) handleToolsCall(ctx context.Context, session *Session, params json.RawMessage) (interface{}, error) {
+func (s *Server) handleToolsCall(ctx context.Context, session *Session, params json.RawMessage) (any, error) {
 	var callParams struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments,omitempty"`
 	}
 
 	if err := json.Unmarshal(params, &callParams); err != nil {
+		s.slog.Error("Failed to unmarshal parameters", "error", err, "sessionID", session.ID)
 		return nil, fmt.Errorf("invalid parameters: %w", err)
 	}
 
 	result, err := s.toolsHandler.Call(ctx, callParams.Name, callParams.Arguments)
 	if err != nil {
+		s.slog.Error("Failed to call tool", "error", err, "name", callParams.Name, "sessionID", session.ID)
 		return nil, err
 	}
+
+	s.slog.Info("Tool called", "name", callParams.Name, "sessionID", session.ID)
 
 	return result, nil
 }
 
 // handleToolsCallWithEvents handles tool calls that may generate events
-func (s *Server) handleToolsCallWithEvents(ctx context.Context, session *Session, req *Request, eventChan chan<- interface{}) (interface{}, error) {
-	var callParams struct {
-		Name      string         `json:"name"`
-		Arguments map[string]any `json:"arguments,omitempty"`
-	}
+func (s *Server) handleToolsCallWithEvents(ctx context.Context, session *Session, req *Request, eventChan chan<- interface{}) (any, error) {
+	var callParams CallParams
 
 	if err := json.Unmarshal(req.Params, &callParams); err != nil {
 		return nil, fmt.Errorf("invalid parameters: %w", err)

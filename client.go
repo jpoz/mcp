@@ -98,7 +98,7 @@ func (c *Client) Initialize(ctx context.Context, clientInfo ClientInfo) error {
 
 	// Prepare initialization request
 	params := map[string]any{
-		"protocolVersion": "2025-03-2", // Latest version from the spec
+		"protocolVersion": "2025-03-26", // Latest version from the spec
 		"capabilities": map[string]any{
 			// Declare client capabilities
 			"roots": map[string]any{
@@ -204,6 +204,43 @@ func (c *Client) SendNotification(ctx context.Context, method string, params any
 
 	notif := NewNotification(method, params)
 	return c.transport.SendNotification(ctx, notif)
+}
+
+// CallTool invokes a server-side tool with the provided arguments
+func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[string]any) (ToolResult, error) {
+	if !c.IsInitialized() {
+		return ToolResult{}, errors.New("client not initialized")
+	}
+
+	// Prepare the parameters
+	params := CallParams{
+		Name:      toolName,
+		Arguments: arguments,
+	}
+
+	// Send the request
+	resp, err := c.SendRequest(ctx, "tools/call", params)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("failed to call tool: %w", err)
+	}
+
+	// Check for errors in the response
+	if resp.Error != nil {
+		return ToolResult{}, fmt.Errorf("server returned error: %d - %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	// Parse the result
+	var result ToolResult
+	resultBytes, err := json.Marshal(resp.Result)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("failed to re-marshal result: %w", err)
+	}
+
+	if err := json.Unmarshal(resultBytes, &result); err != nil {
+		return ToolResult{}, fmt.Errorf("failed to unmarshal tool result: %w", err)
+	}
+
+	return result, nil
 }
 
 // ListenForMessages starts listening for server-initiated messages

@@ -88,7 +88,7 @@ func (t *StreamableHTTP) SendRequest(ctx context.Context, req *Request) (*Respon
 	// Check response status
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, errors.New("authentication required")
-	} else if resp.StatusCode != http.StatusOK {
+	} else if resp.StatusCode != http.StatusAccepted {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
