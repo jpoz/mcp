@@ -182,43 +182,23 @@ func main() {
 		}
 
 		// Call the tool
-		result, err := client.CallTool(ctx, "get_weather", args)
+		results, err := client.CallTool(ctx, "get_weather", args)
 		if err != nil {
 			fmt.Printf("Failed to call get_weather: %v\n", err)
 		} else {
-			fmt.Println("\nWeather result:")
-			for _, content := range result.Content {
-				if content.Type == "text" {
-					fmt.Println(content.Text)
-				} else {
-					fmt.Printf("Content of type %s: %v\n", content.Type, content)
+			for _, result := range results {
+				fmt.Println("\nWeather result:")
+				for _, content := range result.Content {
+					if content.Type == "text" {
+						fmt.Println(content.Text)
+					} else {
+						fmt.Printf("Content of type %s: %v\n", content.Type, content)
+					}
+				}
+				if result.IsError {
+					fmt.Println("Note: Result marked as error")
 				}
 			}
-			if result.IsError {
-				fmt.Println("Note: Result marked as error")
-			}
-		}
-	}
-
-	// Start listening for server-initiated messages
-	waitForEnter("\nReady to listen for server messages")
-	fmt.Println("Listening for server messages...")
-	msgChan, errChan := client.ListenForMessages(ctx)
-
-	// Wait for messages or context cancellation
-	timeout := time.After(10 * time.Second)
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("Context cancelled, exiting")
-			return
-		case <-timeout:
-			fmt.Println("Timeout reached, shutting down")
-			return
-		case err := <-errChan:
-			fmt.Printf("Error receiving message: %v\n", err)
-		case msg := <-msgChan:
-			fmt.Printf("Received message: %#v\n", msg)
 		}
 	}
 }

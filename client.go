@@ -508,9 +508,9 @@ func (c *Client) SendNotification(ctx context.Context, method string, params any
 }
 
 // CallTool invokes a server-side tool with the provided arguments
-func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[string]any) (ToolResult, error) {
+func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[string]any) ([]ToolResult, error) {
 	if !c.IsInitialized() {
-		return ToolResult{}, errors.New("client not initialized")
+		return []ToolResult{}, errors.New("client not initialized")
 	}
 
 	// Prepare the parameters
@@ -519,10 +519,10 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 		Arguments: arguments,
 	}
 
-	var result ToolResult
-
 	callback := func(evt *SSEEvent) error {
 		c.slog.Debug("Received SSE event", "event", evt)
+
+		fmt.Println("Received SSE event:", evt)
 		return nil
 	}
 
@@ -531,25 +531,37 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 	// Send the request
 	resp, err := c.SendRequestWithCallback(ctx, "tools/call", params, callback)
 	if err != nil {
-		return ToolResult{}, fmt.Errorf("failed to call tool: %w", err)
+		return []ToolResult{}, fmt.Errorf("failed to call tool: %w", err)
 	}
-
-	// Check for errors in the response
 	if resp.Error != nil {
-		return ToolResult{}, fmt.Errorf("server returned error: %d - %s", resp.Error.Code, resp.Error.Message)
+		return []ToolResult{}, fmt.Errorf("server returned error: %d - %s", resp.Error.Code, resp.Error.Message)
 	}
 
-	// Parse the result
-	resultBytes, err := json.Marshal(resp.Result)
-	if err != nil {
-		return ToolResult{}, fmt.Errorf("failed to re-marshal result: %w", err)
+	resultObject, ok := resp.Result.([]json.RawMessage)
+	if !ok {
+		return []ToolResult{}, fmt.Errorf("invalid response format: expected array of JSON objects")
 	}
 
-	if err := json.Unmarshal(resultBytes, &result); err != nil {
-		return ToolResult{}, fmt.Errorf("failed to unmarshal tool result: %w", err)
+	c.slog.Debug("Tool call responses", "count", len(resultObject))
+
+	result := make([]ToolResult, 0, len(resultObject))
+
+	for _, obj := range resultObject {
+		var response struct {
+			JSONRPC string     `json:"jsonrpc"`
+			ID      any        `json:"id"`
+			Result  ToolResult `json:"result"`
+			Error   *Error     `json:"error,omitempty"`
+		}
+		c.slog.Debug("Unmarshalling tool result", "obj", obj)
+		if err := json.Unmarshal(obj, &response); err != nil {
+			return []ToolResult{}, fmt.Errorf("failed to unmarshal tool result: %w", err)
+		}
+
+		result = append(result, response.Result)
 	}
 
-	c.slog.Debug("[Call Tool] Tool result", "result", result)
+	c.slog.Debug("Tool call result", "result", result)
 
 	return result, nil
 }

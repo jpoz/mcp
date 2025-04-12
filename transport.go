@@ -280,6 +280,20 @@ func (t *StreamableHTTP) SendRequestWithCallback(ctx context.Context, req *Reque
 
 					event = SSEEvent{}
 				}
+
+				continue
+			}
+
+			// Parse the line
+			if len(line) > 3 && line[0:2] == "id" && (line[2] == ':' || line[2] == ' ') {
+				event.ID = trim(line[3:])
+			} else if len(line) > 6 && line[0:5] == "event" && (line[5] == ':' || line[5] == ' ') {
+				event.Event = trim(line[6:])
+			} else if len(line) > 5 && line[0:4] == "data" && (line[4] == ':' || line[4] == ' ') {
+				if event.Data != "" {
+					event.Data += "\n"
+				}
+				event.Data += trim(line[5:])
 			}
 		}
 
