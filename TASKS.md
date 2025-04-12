@@ -60,14 +60,14 @@ This document outlines the remaining implementation tasks to fully comply with t
 
 - [x] Fix recursive GetSessionID() call in client.go (line 85)
 - [x] Implement proper protocol version negotiation during initialization
-- [ ] Add the stdio transport implementation
-- [ ] Support connection resumability with Last-Event-ID
-- [ ] Fix error in processessage typo (should be processMessage)
-- [ ] Add proper error handling for session expiration (404 responses)
-- [ ] Implement explicit session termination via HTTP DELETE
-- [ ] Add connection health check with ping/pong
-- [ ] Implement cancellation notifications for timeouts
+- [x] Add the stdio transport implementation
+- [x] Support connection resumability with Last-Event-ID
+- [x] Fix error in processessage typo (should be processMessage)
+- [x] Add proper error handling for session expiration (404 responses)
+- [x] Implement explicit session termination via HTTP DELETE
+- [x] Add connection health check with ping/pong
+- [x] Implement cancellation notifications for timeouts
 - [ ] Support JSON-RPC batch requests/responses
 - [ ] Add client capability for handling server-initiated requests
 - [ ] Implement proper handling of SSE disconnection and reconnection
-- [ ] Add request timeout configuration
+- [x] Add request timeout configuration

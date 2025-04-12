@@ -246,7 +246,7 @@ func (s *Server) handlePromptsGet(ctx context.Context, session *Session, params 
 }
 
 // handleToolsMethod routes tool-related method calls
-func (s *Server) handleToolsMethod(ctx context.Context, session *Session, req *Request) (interface{}, error) {
+func (s *Server) handleToolsMethod(ctx context.Context, session *Session, req *Request) (any, error) {
 	s.mu.RLock()
 	handler := s.toolsHandler
 	s.mu.RUnlock()
@@ -346,6 +346,7 @@ func (s *Server) handleToolsCallWithEvents(ctx context.Context, session *Session
 
 	result, err := handler.Call(ctx, callParams.Name, callParams.Arguments)
 	if err != nil {
+		s.slog.Error("Failed to call tool", "error", err, "name", callParams.Name, "sessionID", session.ID)
 		return nil, err
 	}
 

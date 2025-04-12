@@ -235,7 +235,7 @@ func (s *Server) handleRequestWithEvents(w http.ResponseWriter, r *http.Request,
 			s.slog.Debug("Sending event", "data", string(data))
 
 			w.WriteHeader(http.StatusAccepted)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			fmt.Fprintf(w, "%s\n\n", data)
 			flusher.Flush()
 
 		case err, ok := <-errChan:
@@ -261,7 +261,7 @@ func (s *Server) handleRequestWithEvents(w http.ResponseWriter, r *http.Request,
 
 			s.slog.Error("Sending error", "data", string(data))
 
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			fmt.Fprintf(w, "%s\n\n", data)
 			flusher.Flush()
 			return
 		case <-ctx.Done():

@@ -15,6 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Code Style Guidelines
 
 - Follow Go standard [style conventions](https://golang.org/doc/effective_go)
+- Always use `any` instead of `interface{}`
 - Use meaningful package and variable names
 - Use CamelCase for exported names, camelCase for non-exported names
 - Imports should be grouped: standard library, then third-party, then local

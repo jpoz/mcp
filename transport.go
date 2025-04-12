@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -16,12 +17,55 @@ import (
 	"sync/atomic"
 )
 
+// Transport defines the interface for MCP transport implementations
+type Transport interface {
+	// SendRequest sends a JSON-RPC request and returns the response
+	SendRequest(ctx context.Context, req *Request) (*Response, error)
+
+	// SendRequestWithCallback sends a JSON-RPC request and calls the callback with the response
+	SendRequestWithCallback(ctx context.Context, req *Request, callback func(*SSEEvent) error) (*Response, error)
+
+	// SendRequestWithEvents sends a JSON-RPC request that might generate an event stream
+	SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan interface{}, <-chan error, error)
+
+	// SendNotification sends a JSON-RPC notification
+	SendNotification(ctx context.Context, notif *Notification) error
+
+	// ListenForMessages starts listening for server-initiated messages
+	ListenForMessages(ctx context.Context) (<-chan interface{}, <-chan error)
+
+	// GetSessionID returns the current session ID
+	GetSessionID() string
+
+	// SetSessionID sets the session ID for this transport
+	SetSessionID(sessionID string)
+
+	// TerminateSession explicitly terminates the session on the server
+	TerminateSession(ctx context.Context) error
+}
+
 // StreamableHTTP implements the MCP Streamable HTTP transport
 type StreamableHTTP struct {
 	baseURL     string
 	httpClient  *http.Client
 	sessionID   string
 	lastEventID string
+	mu          sync.Mutex
+}
+
+// STDIO implements the MCP stdio transport
+type STDIO struct {
+	cmd         *os.Process
+	stdin       io.Writer
+	stdout      *bufio.Reader
+	stderr      io.ReadCloser // For reading logs output to stderr
+	sessionID   string        // Not used in stdio but kept for interface compatibility
+	nextLineID  atomic.Int64  // For providing unique event IDs
+	requestMap  sync.Map      // Maps request IDs to response channels
+	initialized atomic.Bool
+	eventChan   chan interface{} // Channel for server-initiated events
+	errChan     chan error       // Channel for transport errors
+	stopChan    chan struct{}    // Channel to signal reader to stop
 	mu          sync.Mutex
 }
 
@@ -112,6 +156,139 @@ func (t *StreamableHTTP) SendRequest(ctx context.Context, req *Request) (*Respon
 	return nil, fmt.Errorf("unexpected content type: %s", contentType)
 }
 
+func (t *StreamableHTTP) SendRequestWithCallback(ctx context.Context, req *Request, callback func(*SSEEvent) error) (*Response, error) {
+	// Serialize the request
+	reqData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL, bytes.NewReader(reqData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Set headers
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
+
+	// Include session ID if available
+	t.mu.Lock()
+	if t.sessionID != "" {
+		httpReq.Header.Set("Mcp-Session-Id", t.sessionID)
+	}
+
+	// Include Last-Event-ID if available for resumability
+	if t.lastEventID != "" {
+		httpReq.Header.Set("Last-Event-ID", t.lastEventID)
+	}
+	t.mu.Unlock()
+
+	slog.Debug("Sending request", "method", req.Method, "params", req.Params)
+
+	// Send the request
+	resp, err := t.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+
+	// Check for session ID in response
+	if sessionID := resp.Header.Get("Mcp-Session-Id"); sessionID != "" {
+		if t.sessionID != sessionID {
+			// Session ID changed, update it
+			t.mu.Lock()
+			t.sessionID = sessionID
+			t.mu.Unlock()
+		}
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, errors.New("authentication required")
+	}
+
+	if resp.StatusCode == http.StatusNotFound && t.sessionID != "" {
+		// Session likely expired
+		resp.Body.Close()
+		return nil, errors.New("session expired or not found (HTTP 404)")
+	}
+
+	if resp.StatusCode != http.StatusAccepted {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+
+	if contentType == "application/json" {
+		slog.Debug("Received JSON response", "status", resp.StatusCode)
+		// Parse JSON response and close the body
+		var jsonResp Response
+		if err := json.NewDecoder(resp.Body).Decode(&jsonResp); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to decode JSON response: %w", err)
+		}
+		resp.Body.Close()
+		return &jsonResp, nil
+	} else if contentType == "text/event-stream" {
+		slog.Debug("Received SSE stream", "status", resp.StatusCode)
+		defer resp.Body.Close()
+		jsonResp := Response{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result:  nil,
+			Error:   nil,
+		}
+
+		scanner := NewSSEScanner(resp.Body)
+		var event SSEEvent
+
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			if line == "" {
+				if event.Data != "" {
+					// Parse the data as JSON-RPC message
+					var raw json.RawMessage
+					err := json.Unmarshal([]byte(event.Data), &raw)
+					if err != nil {
+						if jsonResp.Error == nil {
+							jsonResp.Error = &Error{
+								Code:    -32603,
+								Message: "Invalid JSON-RPC message",
+							}
+						}
+
+						slog.Error("Failed to parse event data as JSON", "error", err)
+						return &jsonResp, fmt.Errorf("failed to parse event data as JSON: %w", err)
+					}
+
+					// Append data on to jsonResp.Result
+					if jsonResp.Result == nil {
+						jsonResp.Result = make([]json.RawMessage, 0)
+					}
+					jsonResp.Result = append(jsonResp.Result.([]json.RawMessage), raw)
+
+					callback(&event)
+
+					if event.ID != "" {
+						t.mu.Lock()
+						t.lastEventID = event.ID
+						t.mu.Unlock()
+					}
+
+					event = SSEEvent{}
+				}
+			}
+		}
+
+		return &jsonResp, nil
+	}
+
+	return nil, fmt.Errorf("unexpected content type: %s", contentType)
+}
+
 // SendRequestWithEvents sends a JSON-RPC request that might generate an SSE stream
 // It returns both the immediate response (if any) and a channel for events
 func (t *StreamableHTTP) SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan interface{}, <-chan error, error) {
@@ -140,6 +317,11 @@ func (t *StreamableHTTP) SendRequestWithEvents(ctx context.Context, req *Request
 	if t.sessionID != "" {
 		httpReq.Header.Set("Mcp-Session-Id", t.sessionID)
 	}
+
+	// Include Last-Event-ID if available for resumability
+	if t.lastEventID != "" {
+		httpReq.Header.Set("Last-Event-ID", t.lastEventID)
+	}
 	t.mu.Unlock()
 
 	// Send the request
@@ -159,6 +341,10 @@ func (t *StreamableHTTP) SendRequestWithEvents(ctx context.Context, req *Request
 	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
 		return nil, nil, nil, errors.New("authentication required")
+	} else if resp.StatusCode == http.StatusNotFound && t.sessionID != "" {
+		// Session likely expired
+		resp.Body.Close()
+		return nil, nil, nil, errors.New("session expired or not found (HTTP 404)")
 	} else if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
 		return nil, nil, nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -276,6 +462,13 @@ func (t *StreamableHTTP) ListenForMessages(ctx context.Context) (<-chan interfac
 			close(eventChan)
 			close(errChan)
 			return
+		} else if resp.StatusCode == http.StatusNotFound && t.sessionID != "" {
+			// Session likely expired
+			resp.Body.Close()
+			errChan <- errors.New("session expired or not found (HTTP 404)")
+			close(eventChan)
+			close(errChan)
+			return
 		} else if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
 			errChan <- fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -381,7 +574,7 @@ func (t *StreamableHTTP) handleSSEEvent(event *SSEEvent, expectedID interface{},
 
 		// Process each message in the batch
 		for _, msg := range batch {
-			if err := t.processessage(msg, expectedID, eventChan); err != nil {
+			if err := t.processMessage(msg, expectedID, eventChan); err != nil {
 				return err
 			}
 		}
@@ -389,13 +582,13 @@ func (t *StreamableHTTP) handleSSEEvent(event *SSEEvent, expectedID interface{},
 	}
 
 	// Single message
-	return t.processessage(raw, expectedID, eventChan)
+	return t.processMessage(raw, expectedID, eventChan)
 }
 
-// processessage processes a single JSON-RPC message
-func (t *StreamableHTTP) processessage(data json.RawMessage, expectedID interface{}, eventChan chan<- interface{}) error {
+// processMessage processes a single JSON-RPC message
+func (t *StreamableHTTP) processMessage(data json.RawMessage, expectedID interface{}, eventChan chan<- interface{}) error {
 	// Try parsing as each type of message, starting with response
-	var temp map[string]interface{}
+	var temp map[string]any
 	if err := json.Unmarshal(data, &temp); err != nil {
 		return fmt.Errorf("invalid JSON-RPC message: %w", err)
 	}
@@ -450,7 +643,9 @@ func NewSSEScanner(r io.Reader) *SSEScanner {
 // Scan advances the Scanner to the next line
 func (s *SSEScanner) Scan() bool {
 	s.line, s.err = s.reader.ReadString('\n')
+	slog.Debug("SSEScanner line", "line", s.line)
 	if s.err != nil {
+		slog.Debug("SSEScanner error", "error", s.err)
 		return false
 	}
 	// Trim the trailing newline character(s)
@@ -478,4 +673,263 @@ func trim(s string) string {
 		return s[1:]
 	}
 	return s
+}
+
+// NewSTDIO creates a new STDIO transport with the given input/output streams
+func NewSTDIO(stdin io.Writer, stdout io.Reader, stderr io.ReadCloser, cmd *os.Process) *STDIO {
+	transport := &STDIO{
+		cmd:       cmd,
+		stdin:     stdin,
+		stdout:    bufio.NewReader(stdout),
+		stderr:    stderr,
+		eventChan: make(chan interface{}, 100),
+		errChan:   make(chan error, 10),
+		stopChan:  make(chan struct{}),
+	}
+
+	// Start the reader goroutine
+	go transport.readLoop()
+
+	return transport
+}
+
+// readLoop continuously reads from stdout and processes messages
+func (t *STDIO) readLoop() {
+	defer close(t.eventChan)
+	defer close(t.errChan)
+
+	scanner := bufio.NewScanner(t.stdout)
+
+	for {
+		select {
+		case <-t.stopChan:
+			return
+		default:
+			if !scanner.Scan() {
+				if err := scanner.Err(); err != nil && err != io.EOF {
+					t.errChan <- fmt.Errorf("error reading from stdout: %w", err)
+				}
+				return
+			}
+
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+
+			// Parse the JSON-RPC message
+			var raw json.RawMessage
+			if err := json.Unmarshal([]byte(line), &raw); err != nil {
+				t.errChan <- fmt.Errorf("error parsing JSON-RPC message: %w", err)
+				continue
+			}
+
+			// Check if it's a batch
+			if bytes.HasPrefix(raw, []byte("[")) {
+				var batch []json.RawMessage
+				if err := json.Unmarshal(raw, &batch); err != nil {
+					t.errChan <- fmt.Errorf("error parsing JSON-RPC batch: %w", err)
+					continue
+				}
+
+				for _, msg := range batch {
+					t.processMessage(msg)
+				}
+				continue
+			}
+
+			// Process single message
+			t.processMessage(raw)
+		}
+	}
+}
+
+// processMessage processes a single JSON-RPC message
+func (t *STDIO) processMessage(data json.RawMessage) {
+	// Try to determine the message type
+	var temp map[string]interface{}
+	if err := json.Unmarshal(data, &temp); err != nil {
+		t.errChan <- fmt.Errorf("invalid JSON-RPC message: %w", err)
+		return
+	}
+
+	// Check if it's a request, response, or notification
+	if _, hasID := temp["id"]; hasID {
+		if _, hasMethod := temp["method"]; hasMethod {
+			// This is a request
+			var req Request
+			if err := json.Unmarshal(data, &req); err != nil {
+				t.errChan <- fmt.Errorf("invalid JSON-RPC request: %w", err)
+				return
+			}
+			t.eventChan <- &req
+		} else {
+			// This is a response
+			var resp Response
+			if err := json.Unmarshal(data, &resp); err != nil {
+				t.errChan <- fmt.Errorf("invalid JSON-RPC response: %w", err)
+				return
+			}
+
+			// Check if there's a waiting request
+			if value, ok := t.requestMap.LoadAndDelete(resp.ID); ok {
+				respChan := value.(chan *Response)
+				respChan <- &resp
+				close(respChan)
+			} else {
+				// No waiting request, send to event channel
+				t.eventChan <- &resp
+			}
+		}
+	} else if _, hasMethod := temp["method"]; hasMethod {
+		// This is a notification
+		var notif Notification
+		if err := json.Unmarshal(data, &notif); err != nil {
+			t.errChan <- fmt.Errorf("invalid JSON-RPC notification: %w", err)
+			return
+		}
+		t.eventChan <- &notif
+	} else {
+		t.errChan <- errors.New("unknown JSON-RPC message type")
+	}
+}
+
+// SetSessionID implements the Transport interface (no-op for STDIO)
+func (t *STDIO) SetSessionID(sessionID string) {
+	// No-op for STDIO transport
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sessionID = sessionID
+}
+
+// GetSessionID implements the Transport interface (no-op for STDIO)
+func (t *STDIO) GetSessionID() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.sessionID
+}
+
+// SendRequest sends a JSON-RPC request over STDIO and waits for the response
+func (t *STDIO) SendRequest(ctx context.Context, req *Request) (*Response, error) {
+	// Create a channel to receive the response
+	respChan := make(chan *Response, 1)
+	t.requestMap.Store(req.ID, respChan)
+
+	// Serialize the request
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		t.requestMap.Delete(req.ID)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Send the request
+	t.mu.Lock()
+	_, err = fmt.Fprintf(t.stdin, "%s\n", jsonData)
+	t.mu.Unlock()
+	if err != nil {
+		t.requestMap.Delete(req.ID)
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	// Wait for the response or context cancellation
+	select {
+	case resp := <-respChan:
+		return resp, nil
+	case <-ctx.Done():
+		t.requestMap.Delete(req.ID)
+		return nil, ctx.Err()
+	}
+}
+
+// SendRequestWithEvents sends a JSON-RPC request over STDIO
+// For STDIO, this is the same as SendRequest since we don't have SSE streams
+func (t *STDIO) SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan interface{}, <-chan error, error) {
+	resp, err := t.SendRequest(ctx, req)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Create empty channels to satisfy the interface
+	eventChan := make(chan interface{})
+	errChan := make(chan error)
+	close(eventChan)
+	close(errChan)
+
+	return resp, eventChan, errChan, nil
+}
+
+// SendNotification sends a JSON-RPC notification over STDIO
+func (t *STDIO) SendNotification(ctx context.Context, notif *Notification) error {
+	// Serialize the notification
+	jsonData, err := json.Marshal(notif)
+	if err != nil {
+		return fmt.Errorf("failed to marshal notification: %w", err)
+	}
+
+	// Send the notification
+	t.mu.Lock()
+	_, err = fmt.Fprintf(t.stdin, "%s\n", jsonData)
+	t.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("failed to send notification: %w", err)
+	}
+
+	return nil
+}
+
+// ListenForMessages returns channels for receiving messages from the server
+// For STDIO, this just returns the existing event and error channels
+func (t *STDIO) ListenForMessages(ctx context.Context) (<-chan interface{}, <-chan error) {
+	return t.eventChan, t.errChan
+}
+
+// TerminateSession explicitly terminates the session on the server
+// Only applicable for StreamableHTTP transport
+func (t *StreamableHTTP) TerminateSession(ctx context.Context) error {
+	// Check if we have a session ID
+	t.mu.Lock()
+	sessionID := t.sessionID
+	t.mu.Unlock()
+
+	if sessionID == "" {
+		return errors.New("no active session to terminate")
+	}
+
+	// Create DELETE request
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, t.baseURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Set session ID header
+	httpReq.Header.Set("Mcp-Session-Id", sessionID)
+
+	// Send the request
+	resp, err := t.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// According to the spec, the server may respond with 405 Method Not Allowed
+	// if it doesn't allow clients to terminate sessions
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		return errors.New("server does not allow clients to terminate sessions")
+	} else if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted &&
+		resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("unexpected status code for session termination: %d", resp.StatusCode)
+	}
+
+	// Clear the session ID
+	t.mu.Lock()
+	t.sessionID = ""
+	t.mu.Unlock()
+
+	return nil
+}
+
+// TerminateSession is a no-op for STDIO transport
+func (t *STDIO) TerminateSession(ctx context.Context) error {
+	// No-op for STDIO transport
+	return nil
 }

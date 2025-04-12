@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"time"
@@ -22,7 +23,12 @@ func main() {
 	fmt.Printf("Connecting to MCP server at %s\n", serverURL)
 
 	// Create the client
-	client := mcp.NewClient(serverURL)
+	client := mcp.NewClientWithOptions(serverURL, mcp.ClientOptions{
+		DefaultTimeout: time.Second * 30,
+		Logger:         slog.Default(),
+	})
+
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	// Create a context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
