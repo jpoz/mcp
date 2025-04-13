@@ -557,6 +557,83 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 	return result, nil
 }
 
+// ListTools lists the available tools on the server
+func (c *Client) ListTools(ctx context.Context, cursor string) ([]ToolInfo, string, error) {
+	if !c.IsInitialized() {
+		return nil, "", errors.New("client not initialized")
+	}
+
+	// Check if the server supports the tools capability
+	c.mu.Lock()
+	_, hasTools := c.capabilities["tools"]
+	c.mu.Unlock()
+	if !hasTools {
+		return nil, "", errors.New("server does not support tools")
+	}
+
+	// Prepare the parameters
+	params := map[string]string{}
+	if cursor != "" {
+		params["cursor"] = cursor
+	}
+
+	c.slog.Debug("Listing tools", "cursor", cursor)
+
+	// Send the request
+	resp, err := c.SendRequest(ctx, "tools/list", params)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to list tools: %w", err)
+	}
+	if resp.Error != nil {
+		return nil, "", fmt.Errorf("server returned error: %d - %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	// Define a struct to match the expected response format
+	var listResult struct {
+		Tools      []ToolInfo `json:"tools"`
+		NextCursor string     `json:"nextCursor,omitempty"`
+	}
+
+	// Marshal the result part of the response back to bytes
+	resultBytes, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to re-marshal result: %w", err)
+	}
+
+	// Unmarshal the result bytes into our struct
+	if err := json.Unmarshal(resultBytes, &listResult); err != nil {
+		return nil, "", fmt.Errorf("failed to unmarshal tools list result: %w", err)
+	}
+
+	c.slog.Debug("Tools list result", "count", len(listResult.Tools), "nextCursor", listResult.NextCursor)
+
+	return listResult.Tools, listResult.NextCursor, nil
+}
+
+// ListAllTools lists all available tools on the server, handling pagination automatically.
+func (c *Client) ListAllTools(ctx context.Context) ([]ToolInfo, error) {
+	var allTools []ToolInfo
+	var cursor string
+
+	for {
+		tools, nextCursor, err := c.ListTools(ctx, cursor)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list tools page: %w", err)
+		}
+
+		allTools = append(allTools, tools...)
+
+		if nextCursor == "" {
+			// No more pages
+			break
+		}
+		cursor = nextCursor
+	}
+
+	c.slog.Debug("Total tools listed", "count", len(allTools))
+	return allTools, nil
+}
+
 // ListenForMessages starts listening for server-initiated messages
 func (c *Client) ListenForMessages(ctx context.Context) (<-chan any, <-chan error) {
 	if !c.IsInitialized() {
