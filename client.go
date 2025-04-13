@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -147,9 +148,7 @@ func (c *Client) GetCapabilities() map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	result := make(map[string]any)
-	for k, v := range c.capabilities {
-		result[k] = v
-	}
+	maps.Copy(result, c.capabilities)
 	return result
 }
 
@@ -253,20 +252,17 @@ func (c *Client) Initialize(ctx context.Context, clientInfo ClientInfo) error {
 
 ProcessSuccessfulResponse:
 	// Parse the result
-	var result struct {
-		ProtocolVersion string         `json:"protocolVersion"`
-		Capabilities    map[string]any `json:"capabilities"`
-		ServerInfo      ServerInfo     `json:"serverInfo"`
-	}
-
-	resultBytes, err := json.Marshal(resp.Result)
+	var initResp InitializeResponse
+	respBytes, err := json.Marshal(resp)
 	if err != nil {
-		return fmt.Errorf("failed to re-marshal result: %w", err)
+		return fmt.Errorf("failed to re-marshal response: %w", err)
 	}
 
-	if err := json.Unmarshal(resultBytes, &result); err != nil {
-		return fmt.Errorf("failed to unmarshal initialization result: %w", err)
+	if err := json.Unmarshal(respBytes, &initResp); err != nil {
+		return fmt.Errorf("failed to unmarshal initialization response: %w", err)
 	}
+
+	result := initResp.Result
 
 	// Verify the protocol version is supported
 	versionSupported := slices.Contains(supportedVersions, result.ProtocolVersion)
@@ -547,18 +543,13 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 	result := make([]ToolResult, 0, len(resultObject))
 
 	for _, obj := range resultObject {
-		var response struct {
-			JSONRPC string     `json:"jsonrpc"`
-			ID      any        `json:"id"`
-			Result  ToolResult `json:"result"`
-			Error   *Error     `json:"error,omitempty"`
-		}
+		var toolResp ToolResponse
 		c.slog.Debug("Unmarshalling tool result", "obj", obj)
-		if err := json.Unmarshal(obj, &response); err != nil {
+		if err := json.Unmarshal(obj, &toolResp); err != nil {
 			return []ToolResult{}, fmt.Errorf("failed to unmarshal tool result: %w", err)
 		}
 
-		result = append(result, response.Result)
+		result = append(result, toolResp.Result)
 	}
 
 	c.slog.Debug("Tool call result", "result", result)
