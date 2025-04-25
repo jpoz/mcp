@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Transport defines the interface for MCP transport implementations
@@ -26,13 +27,13 @@ type Transport interface {
 	SendRequestWithCallback(ctx context.Context, req *Request, callback func(*SSEEvent) error) (*Response, error)
 
 	// SendRequestWithEvents sends a JSON-RPC request that might generate an event stream
-	SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan interface{}, <-chan error, error)
+	SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan any, <-chan error, error)
 
 	// SendNotification sends a JSON-RPC notification
 	SendNotification(ctx context.Context, notif *Notification) error
 
 	// ListenForMessages starts listening for server-initiated messages
-	ListenForMessages(ctx context.Context) (<-chan interface{}, <-chan error)
+	ListenForMessages(ctx context.Context) (<-chan any, <-chan error)
 
 	// GetSessionID returns the current session ID
 	GetSessionID() string
@@ -63,9 +64,9 @@ type STDIO struct {
 	nextLineID  atomic.Int64  // For providing unique event IDs
 	requestMap  sync.Map      // Maps request IDs to response channels
 	initialized atomic.Bool
-	eventChan   chan interface{} // Channel for server-initiated events
-	errChan     chan error       // Channel for transport errors
-	stopChan    chan struct{}    // Channel to signal reader to stop
+	eventChan   chan any      // Channel for server-initiated events
+	errChan     chan error    // Channel for transport errors
+	stopChan    chan struct{} // Channel to signal reader to stop
 	mu          sync.Mutex
 }
 
@@ -305,9 +306,9 @@ func (t *StreamableHTTP) SendRequestWithCallback(ctx context.Context, req *Reque
 
 // SendRequestWithEvents sends a JSON-RPC request that might generate an SSE stream
 // It returns both the immediate response (if any) and a channel for events
-func (t *StreamableHTTP) SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan interface{}, <-chan error, error) {
+func (t *StreamableHTTP) SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan any, <-chan error, error) {
 	// Create channels for events and errors
-	eventChan := make(chan interface{})
+	eventChan := make(chan any)
 	errChan := make(chan error)
 
 	// Serialize the request
@@ -431,8 +432,8 @@ func (t *StreamableHTTP) SendNotification(ctx context.Context, notif *Notificati
 }
 
 // ListenForMessages opens a GET connection to listen for server-initiated messages
-func (t *StreamableHTTP) ListenForMessages(ctx context.Context) (<-chan interface{}, <-chan error) {
-	eventChan := make(chan interface{})
+func (t *StreamableHTTP) ListenForMessages(ctx context.Context) (<-chan any, <-chan error) {
+	eventChan := make(chan any)
 	errChan := make(chan error)
 
 	go func() {
@@ -516,7 +517,7 @@ type SSEEvent struct {
 }
 
 // processSSE processes an SSE stream from an HTTP response
-func (t *StreamableHTTP) processSSE(resp *http.Response, expectedID interface{}, eventChan chan<- interface{}, errChan chan<- error) {
+func (t *StreamableHTTP) processSSE(resp *http.Response, expectedID any, eventChan chan<- any, errChan chan<- error) {
 	defer resp.Body.Close()
 	defer close(eventChan)
 	defer close(errChan)
@@ -568,7 +569,7 @@ func (t *StreamableHTTP) processSSE(resp *http.Response, expectedID interface{},
 }
 
 // handleSSEEvent processes an SSE event and sends the result to the event channel
-func (t *StreamableHTTP) handleSSEEvent(event *SSEEvent, expectedID interface{}, eventChan chan<- interface{}) error {
+func (t *StreamableHTTP) handleSSEEvent(event *SSEEvent, expectedID any, eventChan chan<- any) error {
 	if event.Data == "" {
 		return nil // Skip events with no data
 	}
@@ -600,7 +601,7 @@ func (t *StreamableHTTP) handleSSEEvent(event *SSEEvent, expectedID interface{},
 }
 
 // processMessage processes a single JSON-RPC message
-func (t *StreamableHTTP) processMessage(data json.RawMessage, expectedID interface{}, eventChan chan<- interface{}) error {
+func (t *StreamableHTTP) processMessage(data json.RawMessage, expectedID any, eventChan chan<- any) error {
 	// Try parsing as each type of message, starting with response
 	var temp map[string]any
 	if err := json.Unmarshal(data, &temp); err != nil {
@@ -696,7 +697,7 @@ func NewSTDIO(stdin io.Writer, stdout io.Reader, stderr io.ReadCloser, cmd *os.P
 		stdin:     stdin,
 		stdout:    bufio.NewReader(stdout),
 		stderr:    stderr,
-		eventChan: make(chan interface{}, 100),
+		eventChan: make(chan any, 100),
 		errChan:   make(chan error, 10),
 		stopChan:  make(chan struct{}),
 	}
@@ -712,17 +713,29 @@ func (t *STDIO) readLoop() {
 	defer close(t.eventChan)
 	defer close(t.errChan)
 
+	// Also read from stderr for debugging
+	go t.readStderr()
+
+	slog.Debug("STDIO readLoop started")
 	scanner := bufio.NewScanner(t.stdout)
+	// Increase scanner buffer size to handle large messages
+	const maxScannerSize = 10 * 1024 * 1024 // 10MB
+	buf := make([]byte, maxScannerSize)
+	scanner.Buffer(buf, maxScannerSize)
 
 	for {
 		select {
 		case <-t.stopChan:
+			slog.Debug("STDIO readLoop stopping")
 			return
 		default:
 			if !scanner.Scan() {
 				if err := scanner.Err(); err != nil && err != io.EOF {
-					t.errChan <- fmt.Errorf("error reading from stdout: %w", err)
+					errMsg := fmt.Errorf("error reading from stdout: %w", err)
+					slog.Error("STDIO read error", "error", err)
+					t.errChan <- errMsg
 				}
+				slog.Debug("STDIO readLoop ending (EOF or error)")
 				return
 			}
 
@@ -731,10 +744,14 @@ func (t *STDIO) readLoop() {
 				continue
 			}
 
+			slog.Debug("STDIO received line", "line", line)
+
 			// Parse the JSON-RPC message
 			var raw json.RawMessage
 			if err := json.Unmarshal([]byte(line), &raw); err != nil {
-				t.errChan <- fmt.Errorf("error parsing JSON-RPC message: %w", err)
+				errMsg := fmt.Errorf("error parsing JSON-RPC message: %w", err)
+				slog.Error("STDIO JSON parse error", "error", err, "line", line)
+				t.errChan <- errMsg
 				continue
 			}
 
@@ -742,10 +759,13 @@ func (t *STDIO) readLoop() {
 			if bytes.HasPrefix(raw, []byte("[")) {
 				var batch []json.RawMessage
 				if err := json.Unmarshal(raw, &batch); err != nil {
-					t.errChan <- fmt.Errorf("error parsing JSON-RPC batch: %w", err)
+					errMsg := fmt.Errorf("error parsing JSON-RPC batch: %w", err)
+					slog.Error("STDIO JSON batch parse error", "error", err)
+					t.errChan <- errMsg
 					continue
 				}
 
+				slog.Debug("STDIO processing batch", "size", len(batch))
 				for _, msg := range batch {
 					t.processMessage(msg)
 				}
@@ -758,14 +778,34 @@ func (t *STDIO) readLoop() {
 	}
 }
 
+// readStderr reads from stderr for debugging purposes
+func (t *STDIO) readStderr() {
+	if t.stderr == nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(t.stderr)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			slog.Debug("STDIO stderr", "line", line)
+		}
+	}
+}
+
 // processMessage processes a single JSON-RPC message
 func (t *STDIO) processMessage(data json.RawMessage) {
 	// Try to determine the message type
-	var temp map[string]interface{}
+	var temp map[string]any
 	if err := json.Unmarshal(data, &temp); err != nil {
-		t.errChan <- fmt.Errorf("invalid JSON-RPC message: %w", err)
+		errMsg := fmt.Errorf("invalid JSON-RPC message: %w", err)
+		slog.Error("STDIO message parse error", "error", err)
+		t.errChan <- errMsg
 		return
 	}
+
+	// Log the message type
+	slog.Debug("STDIO processing message", "has_id", temp["id"] != nil, "has_method", temp["method"] != nil)
 
 	// Check if it's a request, response, or notification
 	if _, hasID := temp["id"]; hasID {
@@ -773,25 +813,68 @@ func (t *STDIO) processMessage(data json.RawMessage) {
 			// This is a request
 			var req Request
 			if err := json.Unmarshal(data, &req); err != nil {
-				t.errChan <- fmt.Errorf("invalid JSON-RPC request: %w", err)
+				errMsg := fmt.Errorf("invalid JSON-RPC request: %w", err)
+				slog.Error("STDIO request parse error", "error", err)
+				t.errChan <- errMsg
 				return
 			}
+			slog.Debug("STDIO received request", "id", req.ID, "method", req.Method)
 			t.eventChan <- &req
 		} else {
 			// This is a response
 			var resp Response
 			if err := json.Unmarshal(data, &resp); err != nil {
-				t.errChan <- fmt.Errorf("invalid JSON-RPC response: %w", err)
+				errMsg := fmt.Errorf("invalid JSON-RPC response: %w", err)
+				slog.Error("STDIO response parse error", "error", err)
+				t.errChan <- errMsg
 				return
 			}
 
-			// Check if there's a waiting request
-			if value, ok := t.requestMap.LoadAndDelete(resp.ID); ok {
-				respChan := value.(chan *Response)
-				respChan <- &resp
-				close(respChan)
-			} else {
+			slog.Debug("STDIO received response", "id", resp.ID, "has_error", resp.Error != nil)
+			
+			// Show all waiting requests for debugging
+			var waitingIds []any
+			t.requestMap.Range(func(key, value any) bool {
+				waitingIds = append(waitingIds, key)
+				return true
+			})
+			slog.Debug("STDIO waiting requests", "ids", waitingIds, "response_id", resp.ID, "response_id_type", fmt.Sprintf("%T", resp.ID))
+			
+			// Try to find a request ID that matches our response ID
+			var found bool
+			t.requestMap.Range(func(key, value any) bool {
+				slog.Debug("STDIO comparing IDs", "request_id", key, "request_id_type", fmt.Sprintf("%T", key), 
+					"response_id", resp.ID, "response_id_type", fmt.Sprintf("%T", resp.ID))
+				
+				// Try to match the IDs, which might be of different types
+				keyID, keyOk := key.(int64)
+				respID, respOk := resp.ID.(float64)
+				
+				if keyOk && respOk && keyID == int64(respID) {
+					// IDs match but with different types
+					slog.Debug("STDIO found matching request with different type", "key", key, "resp_id", resp.ID)
+					respChan := value.(chan *Response)
+					respChan <- &resp
+					close(respChan)
+					t.requestMap.Delete(key)
+					found = true
+					return false // Stop iterating
+				} else if key == resp.ID {
+					// Direct match
+					slog.Debug("STDIO found exact matching request", "id", resp.ID)
+					respChan := value.(chan *Response)
+					respChan <- &resp
+					close(respChan)
+					t.requestMap.Delete(key)
+					found = true
+					return false // Stop iterating
+				}
+				return true // Continue iterating
+			})
+			
+			if !found {
 				// No waiting request, send to event channel
+				slog.Debug("STDIO no matching channel for response", "id", resp.ID)
 				t.eventChan <- &resp
 			}
 		}
@@ -799,12 +882,17 @@ func (t *STDIO) processMessage(data json.RawMessage) {
 		// This is a notification
 		var notif Notification
 		if err := json.Unmarshal(data, &notif); err != nil {
-			t.errChan <- fmt.Errorf("invalid JSON-RPC notification: %w", err)
+			errMsg := fmt.Errorf("invalid JSON-RPC notification: %w", err)
+			slog.Error("STDIO notification parse error", "error", err)
+			t.errChan <- errMsg
 			return
 		}
+		slog.Debug("STDIO received notification", "method", notif.Method)
 		t.eventChan <- &notif
 	} else {
-		t.errChan <- errors.New("unknown JSON-RPC message type")
+		errMsg := errors.New("unknown JSON-RPC message type")
+		slog.Error("STDIO unknown message type", "data", string(data))
+		t.errChan <- errMsg
 	}
 }
 
@@ -827,7 +915,61 @@ func (t *STDIO) GetSessionID() string {
 func (t *STDIO) SendRequest(ctx context.Context, req *Request) (*Response, error) {
 	// Create a channel to receive the response
 	respChan := make(chan *Response, 1)
+	
+	// Store our response channel in the request map
 	t.requestMap.Store(req.ID, respChan)
+	slog.Debug("STDIO registered response channel", "id", req.ID)
+
+	// Create a goroutine to watch for responses in the event channel
+	// This is a backup in case the response comes through the event channel instead
+	// of being caught directly in processMessage
+	go func() {
+		// Exit if context done
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			// Continue
+		}
+		
+		// Start a timer to check for the response
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Check if we can find our response in the event channel
+				select {
+				case evt := <-t.eventChan:
+					// Check if it's a response with our ID
+					if resp, ok := evt.(*Response); ok {
+						if resp.ID == req.ID {
+							slog.Debug("STDIO found response in event channel", "id", req.ID)
+							// Forward the response to our channel
+							select {
+							case respChan <- resp:
+								return
+							default:
+								// If the channel is already closed or full, just return
+								return
+							}
+						} else {
+							// Put it back in the event channel
+							t.eventChan <- resp
+						}
+					} else {
+						// Put other events back
+						t.eventChan <- evt
+					}
+				default:
+					// No event
+				}
+			}
+		}
+	}()
 
 	// Serialize the request
 	jsonData, err := json.Marshal(req)
@@ -836,10 +978,23 @@ func (t *STDIO) SendRequest(ctx context.Context, req *Request) (*Response, error
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	// Log the request for debugging
+	slog.Debug("STDIO sending request", "id", req.ID, "method", req.Method, "data", string(jsonData))
+
 	// Send the request
 	t.mu.Lock()
 	_, err = fmt.Fprintf(t.stdin, "%s\n", jsonData)
+	
+	// Try to flush if possible
+	if flusher, ok := t.stdin.(interface{ Flush() error }); ok {
+		err = flusher.Flush()
+		if err != nil {
+			slog.Error("Failed to flush stdin", "error", err)
+		}
+	}
+	
 	t.mu.Unlock()
+	
 	if err != nil {
 		t.requestMap.Delete(req.ID)
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -848,23 +1003,31 @@ func (t *STDIO) SendRequest(ctx context.Context, req *Request) (*Response, error
 	// Wait for the response or context cancellation
 	select {
 	case resp := <-respChan:
+		slog.Debug("STDIO received response through channel", "id", resp.ID, "error", resp.Error)
 		return resp, nil
 	case <-ctx.Done():
 		t.requestMap.Delete(req.ID)
+		slog.Debug("STDIO request context cancelled", "id", req.ID, "error", ctx.Err())
 		return nil, ctx.Err()
 	}
 }
 
+// SendRequestWithCallback sends a JSON-RPC request and calls the callback with any events
+func (t *STDIO) SendRequestWithCallback(ctx context.Context, req *Request, callback func(*SSEEvent) error) (*Response, error) {
+	// Since STDIO doesn't support SSE naturally, we just send the request and return the response
+	return t.SendRequest(ctx, req)
+}
+
 // SendRequestWithEvents sends a JSON-RPC request over STDIO
 // For STDIO, this is the same as SendRequest since we don't have SSE streams
-func (t *STDIO) SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan interface{}, <-chan error, error) {
+func (t *STDIO) SendRequestWithEvents(ctx context.Context, req *Request) (*Response, <-chan any, <-chan error, error) {
 	resp, err := t.SendRequest(ctx, req)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// Create empty channels to satisfy the interface
-	eventChan := make(chan interface{})
+	eventChan := make(chan any)
 	errChan := make(chan error)
 	close(eventChan)
 	close(errChan)
@@ -893,7 +1056,7 @@ func (t *STDIO) SendNotification(ctx context.Context, notif *Notification) error
 
 // ListenForMessages returns channels for receiving messages from the server
 // For STDIO, this just returns the existing event and error channels
-func (t *STDIO) ListenForMessages(ctx context.Context) (<-chan interface{}, <-chan error) {
+func (t *STDIO) ListenForMessages(ctx context.Context) (<-chan any, <-chan error) {
 	return t.eventChan, t.errChan
 }
 

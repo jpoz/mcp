@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -95,20 +97,21 @@ func NewClientWithTransportAndOptions(transport Transport, options ClientOptions
 		nextRequestID:  1,
 		capabilities:   make(map[string]any),
 		defaultTimeout: options.DefaultTimeout,
+		slog:           options.Logger,
 	}
 }
 
-// // NewSTDIOClient creates a new MCP client with an STDIO transport
-// func NewSTDIOClient(cmd *os.Process, stdin io.Writer, stdout io.Reader, stderr io.ReadCloser) *Client {
-// 	transport := NewSTDIO(stdin, stdout, stderr, cmd)
-// 	return NewClientWithTransport(transport)
-// }
-//
-// // NewSTDIOClientWithOptions creates a new MCP client with an STDIO transport and the given options
-// func NewSTDIOClientWithOptions(cmd *os.Process, stdin io.Writer, stdout io.Reader, stderr io.ReadCloser, options ClientOptions) *Client {
-// 	transport := NewSTDIO(stdin, stdout, stderr, cmd)
-// 	return NewClientWithTransportAndOptions(transport, options)
-// }
+// NewSTDIOClient creates a new MCP client with an STDIO transport
+func NewSTDIOClient(cmd *os.Process, stdin io.Writer, stdout io.Reader, stderr io.ReadCloser) *Client {
+	transport := NewSTDIO(stdin, stdout, stderr, cmd)
+	return NewClientWithTransport(transport)
+}
+
+// NewSTDIOClientWithOptions creates a new MCP client with an STDIO transport and the given options
+func NewSTDIOClientWithOptions(cmd *os.Process, stdin io.Writer, stdout io.Reader, stderr io.ReadCloser, options ClientOptions) *Client {
+	transport := NewSTDIO(stdin, stdout, stderr, cmd)
+	return NewClientWithTransportAndOptions(transport, options)
+}
 
 // SetDefaultTimeout sets the default timeout for all requests
 func (c *Client) SetDefaultTimeout(timeout time.Duration) {
@@ -515,14 +518,21 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 		Arguments: arguments,
 	}
 
+	// Make sure we have a valid logger
+	var logr *slog.Logger
+	if c.slog != nil {
+		logr = c.slog
+	} else {
+		logr = slog.Default()
+	}
+	
 	callback := func(evt *SSEEvent) error {
-		c.slog.Debug("Received SSE event", "event", evt)
-
+		logr.Debug("Received SSE event", "event", evt)
 		fmt.Println("Received SSE event:", evt)
 		return nil
 	}
 
-	c.slog.Debug("Calling tool", "toolName", toolName, "arguments", arguments)
+	logr.Debug("Calling tool", "toolName", toolName, "arguments", arguments)
 
 	// Send the request
 	resp, err := c.SendRequestWithCallback(ctx, "tools/call", params, callback)
@@ -538,13 +548,13 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 		return []ToolResult{}, fmt.Errorf("invalid response format: expected array of JSON objects")
 	}
 
-	c.slog.Debug("Tool call responses", "count", len(resultObject))
+	logr.Debug("Tool call responses", "count", len(resultObject))
 
 	result := make([]ToolResult, 0, len(resultObject))
 
 	for _, obj := range resultObject {
 		var toolResp ToolResponse
-		c.slog.Debug("Unmarshalling tool result", "obj", obj)
+		logr.Debug("Unmarshalling tool result", "obj", obj)
 		if err := json.Unmarshal(obj, &toolResp); err != nil {
 			return []ToolResult{}, fmt.Errorf("failed to unmarshal tool result: %w", err)
 		}
@@ -552,7 +562,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 		result = append(result, toolResp.Result)
 	}
 
-	c.slog.Debug("Tool call result", "result", result)
+	logr.Debug("Tool call result", "result", result)
 
 	return result, nil
 }
@@ -576,8 +586,15 @@ func (c *Client) ListTools(ctx context.Context, cursor string) ([]ToolInfo, stri
 	if cursor != "" {
 		params["cursor"] = cursor
 	}
-
-	c.slog.Debug("Listing tools", "cursor", cursor)
+	
+	// Make sure we have a valid logger
+	var logr *slog.Logger
+	if c.slog != nil {
+		logr = c.slog
+	} else {
+		logr = slog.Default()
+	}
+	logr.Debug("Listing tools", "cursor", cursor)
 
 	// Send the request
 	resp, err := c.SendRequest(ctx, "tools/list", params)
@@ -604,8 +621,8 @@ func (c *Client) ListTools(ctx context.Context, cursor string) ([]ToolInfo, stri
 	if err := json.Unmarshal(resultBytes, &listResult); err != nil {
 		return nil, "", fmt.Errorf("failed to unmarshal tools list result: %w", err)
 	}
-
-	c.slog.Debug("Tools list result", "count", len(listResult.Tools), "nextCursor", listResult.NextCursor)
+	
+	logr.Debug("Tools list result", "count", len(listResult.Tools), "nextCursor", listResult.NextCursor)
 
 	return listResult.Tools, listResult.NextCursor, nil
 }
@@ -630,7 +647,14 @@ func (c *Client) ListAllTools(ctx context.Context) ([]ToolInfo, error) {
 		cursor = nextCursor
 	}
 
-	c.slog.Debug("Total tools listed", "count", len(allTools))
+	// Make sure we have a valid logger
+	var logr *slog.Logger
+	if c.slog != nil {
+		logr = c.slog
+	} else {
+		logr = slog.Default()
+	}
+	logr.Debug("Total tools listed", "count", len(allTools))
 	return allTools, nil
 }
 
