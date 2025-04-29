@@ -1,6 +1,6 @@
 # Model Context Protocol (MCP) Server Implementation
 
-This package provides a Go implementation of the Model Context Protocol (MCP) server based on the 2025-03-2 specification. It allows applications to expose prompts, resources, and tools to language models through a standardized interface.
+This package provides a Go implementation of the Model Context Protocol (MCP) server based on the 2025-03-26 specification. It allows applications to expose prompts, resources, and tools to language models through a standardized interface.
 
 ## Features
 
