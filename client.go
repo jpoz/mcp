@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"os/exec"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -111,6 +112,60 @@ func NewSTDIOClient(cmd *os.Process, stdin io.Writer, stdout io.Reader, stderr i
 func NewSTDIOClientWithOptions(cmd *os.Process, stdin io.Writer, stdout io.Reader, stderr io.ReadCloser, options ClientOptions) *Client {
 	transport := NewSTDIO(stdin, stdout, stderr, cmd)
 	return NewClientWithTransportAndOptions(transport, options)
+}
+
+// NewSTDIOClientForCommand creates a new MCP client from an exec.Cmd 
+func NewSTDIOClientForCommand(cmd *exec.Cmd) (*Client, error) {
+	// Get stdin and stdout pipes
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	// Get stderr pipe
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start command: %w", err)
+	}
+
+	return NewSTDIOClient(cmd.Process, stdin, stdout, stderr), nil
+}
+
+// NewSTDIOClientForCommandWithOptions creates a new MCP client from an exec.Cmd with custom options
+func NewSTDIOClientForCommandWithOptions(cmd *exec.Cmd, options ClientOptions) (*Client, error) {
+	// Get stdin and stdout pipes
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	// Get stderr pipe
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start command: %w", err)
+	}
+
+	return NewSTDIOClientWithOptions(cmd.Process, stdin, stdout, stderr, options), nil
 }
 
 // SetDefaultTimeout sets the default timeout for all requests
@@ -525,7 +580,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 	} else {
 		logr = slog.Default()
 	}
-	
+
 	callback := func(evt *SSEEvent) error {
 		logr.Debug("Received SSE event", "event", evt)
 		fmt.Println("Received SSE event:", evt)
@@ -586,7 +641,7 @@ func (c *Client) ListTools(ctx context.Context, cursor string) ([]ToolInfo, stri
 	if cursor != "" {
 		params["cursor"] = cursor
 	}
-	
+
 	// Make sure we have a valid logger
 	var logr *slog.Logger
 	if c.slog != nil {
@@ -621,7 +676,7 @@ func (c *Client) ListTools(ctx context.Context, cursor string) ([]ToolInfo, stri
 	if err := json.Unmarshal(resultBytes, &listResult); err != nil {
 		return nil, "", fmt.Errorf("failed to unmarshal tools list result: %w", err)
 	}
-	
+
 	logr.Debug("Tools list result", "count", len(listResult.Tools), "nextCursor", listResult.NextCursor)
 
 	return listResult.Tools, listResult.NextCursor, nil

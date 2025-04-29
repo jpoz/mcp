@@ -831,7 +831,7 @@ func (t *STDIO) processMessage(data json.RawMessage) {
 			}
 
 			slog.Debug("STDIO received response", "id", resp.ID, "has_error", resp.Error != nil)
-			
+
 			// Show all waiting requests for debugging
 			var waitingIds []any
 			t.requestMap.Range(func(key, value any) bool {
@@ -839,17 +839,17 @@ func (t *STDIO) processMessage(data json.RawMessage) {
 				return true
 			})
 			slog.Debug("STDIO waiting requests", "ids", waitingIds, "response_id", resp.ID, "response_id_type", fmt.Sprintf("%T", resp.ID))
-			
+
 			// Try to find a request ID that matches our response ID
 			var found bool
 			t.requestMap.Range(func(key, value any) bool {
-				slog.Debug("STDIO comparing IDs", "request_id", key, "request_id_type", fmt.Sprintf("%T", key), 
+				slog.Debug("STDIO comparing IDs", "request_id", key, "request_id_type", fmt.Sprintf("%T", key),
 					"response_id", resp.ID, "response_id_type", fmt.Sprintf("%T", resp.ID))
-				
+
 				// Try to match the IDs, which might be of different types
 				keyID, keyOk := key.(int64)
 				respID, respOk := resp.ID.(float64)
-				
+
 				if keyOk && respOk && keyID == int64(respID) {
 					// IDs match but with different types
 					slog.Debug("STDIO found matching request with different type", "key", key, "resp_id", resp.ID)
@@ -871,7 +871,7 @@ func (t *STDIO) processMessage(data json.RawMessage) {
 				}
 				return true // Continue iterating
 			})
-			
+
 			if !found {
 				// No waiting request, send to event channel
 				slog.Debug("STDIO no matching channel for response", "id", resp.ID)
@@ -915,7 +915,7 @@ func (t *STDIO) GetSessionID() string {
 func (t *STDIO) SendRequest(ctx context.Context, req *Request) (*Response, error) {
 	// Create a channel to receive the response
 	respChan := make(chan *Response, 1)
-	
+
 	// Store our response channel in the request map
 	t.requestMap.Store(req.ID, respChan)
 	slog.Debug("STDIO registered response channel", "id", req.ID)
@@ -931,11 +931,11 @@ func (t *STDIO) SendRequest(ctx context.Context, req *Request) (*Response, error
 		default:
 			// Continue
 		}
-		
+
 		// Start a timer to check for the response
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
-		
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -984,7 +984,7 @@ func (t *STDIO) SendRequest(ctx context.Context, req *Request) (*Response, error
 	// Send the request
 	t.mu.Lock()
 	_, err = fmt.Fprintf(t.stdin, "%s\n", jsonData)
-	
+
 	// Try to flush if possible
 	if flusher, ok := t.stdin.(interface{ Flush() error }); ok {
 		err = flusher.Flush()
@@ -992,9 +992,9 @@ func (t *STDIO) SendRequest(ctx context.Context, req *Request) (*Response, error
 			slog.Error("Failed to flush stdin", "error", err)
 		}
 	}
-	
+
 	t.mu.Unlock()
-	
+
 	if err != nil {
 		t.requestMap.Delete(req.ID)
 		return nil, fmt.Errorf("failed to send request: %w", err)

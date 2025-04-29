@@ -43,18 +43,18 @@ func (h *DefaultResourcesHandler) RemoveResource(uri string) {
 func (h *DefaultResourcesHandler) List(ctx context.Context, cursor string) ([]ResourceInfo, string, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	// Extract resources
 	var resources []ResourceInfo
 	for _, info := range h.resources {
 		resources = append(resources, info)
 	}
-	
+
 	// Sort for deterministic order
 	sort.Slice(resources, func(i, j int) bool {
 		return resources[i].URI < resources[j].URI
 	})
-	
+
 	// Simple pagination - no actual cursor implementation in this example
 	// A real implementation would parse the cursor and return the appropriate page
 	if cursor != "" {
@@ -66,14 +66,14 @@ func (h *DefaultResourcesHandler) List(ctx context.Context, cursor string) ([]Re
 				break
 			}
 		}
-		
+
 		if start >= len(resources) {
 			return []ResourceInfo{}, "", nil
 		}
-		
+
 		resources = resources[start:]
 	}
-	
+
 	// Limit page size
 	pageSize := 50
 	nextCursor := ""
@@ -81,7 +81,7 @@ func (h *DefaultResourcesHandler) List(ctx context.Context, cursor string) ([]Re
 		nextCursor = resources[pageSize-1].URI
 		resources = resources[:pageSize]
 	}
-	
+
 	return resources, nextCursor, nil
 }
 
@@ -89,12 +89,12 @@ func (h *DefaultResourcesHandler) List(ctx context.Context, cursor string) ([]Re
 func (h *DefaultResourcesHandler) Read(ctx context.Context, uri string) ([]ResourceContent, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	content, ok := h.contents[uri]
 	if !ok {
 		return nil, fmt.Errorf("resource not found: %s", uri)
 	}
-	
+
 	return []ResourceContent{content}, nil
 }
 
@@ -133,18 +133,18 @@ func (h *DefaultPromptsHandler) RemovePrompt(name string) {
 func (h *DefaultPromptsHandler) List(ctx context.Context, cursor string) ([]PromptInfo, string, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	// Extract prompts
 	var prompts []PromptInfo
 	for _, info := range h.prompts {
 		prompts = append(prompts, info)
 	}
-	
+
 	// Sort for deterministic order
 	sort.Slice(prompts, func(i, j int) bool {
 		return prompts[i].Name < prompts[j].Name
 	})
-	
+
 	// Simple pagination - a real implementation would parse the cursor
 	if cursor != "" {
 		// Find where to continue from
@@ -155,14 +155,14 @@ func (h *DefaultPromptsHandler) List(ctx context.Context, cursor string) ([]Prom
 				break
 			}
 		}
-		
+
 		if start >= len(prompts) {
 			return []PromptInfo{}, "", nil
 		}
-		
+
 		prompts = prompts[start:]
 	}
-	
+
 	// Limit page size
 	pageSize := 50
 	nextCursor := ""
@@ -170,7 +170,7 @@ func (h *DefaultPromptsHandler) List(ctx context.Context, cursor string) ([]Prom
 		nextCursor = prompts[pageSize-1].Name
 		prompts = prompts[:pageSize]
 	}
-	
+
 	return prompts, nextCursor, nil
 }
 
@@ -178,19 +178,19 @@ func (h *DefaultPromptsHandler) List(ctx context.Context, cursor string) ([]Prom
 func (h *DefaultPromptsHandler) Get(ctx context.Context, name string, arguments map[string]any) (PromptResult, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	// Check if the prompt exists
 	template, ok := h.templates[name]
 	if !ok {
 		return PromptResult{}, fmt.Errorf("prompt not found: %s", name)
 	}
-	
+
 	// Check if the prompt info exists
 	info, ok := h.prompts[name]
 	if !ok {
 		return PromptResult{}, errors.New("prompt metadata not found")
 	}
-	
+
 	// Validate required arguments
 	for _, arg := range info.Arguments {
 		if arg.Required {
@@ -199,7 +199,7 @@ func (h *DefaultPromptsHandler) Get(ctx context.Context, name string, arguments 
 			}
 		}
 	}
-	
+
 	// In a real implementation, you would apply the arguments to the template
 	// by substituting placeholders in the messages with argument values
 	// For simplicity, we'll just return a copy of the template here
@@ -207,12 +207,12 @@ func (h *DefaultPromptsHandler) Get(ctx context.Context, name string, arguments 
 		Description: template.Description,
 		Messages:    make([]PromptMessage, len(template.Messages)),
 	}
-	
+
 	// Make a deep copy
 	for i, msg := range template.Messages {
 		result.Messages[i] = msg
 	}
-	
+
 	return result, nil
 }
 
@@ -251,18 +251,18 @@ func (h *DefaultToolsHandler) RemoveTool(name string) {
 func (h *DefaultToolsHandler) List(ctx context.Context, cursor string) ([]ToolInfo, string, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	// Extract tools
 	var tools []ToolInfo
 	for _, info := range h.tools {
 		tools = append(tools, info)
 	}
-	
+
 	// Sort for deterministic order
 	sort.Slice(tools, func(i, j int) bool {
 		return tools[i].Name < tools[j].Name
 	})
-	
+
 	// Simple pagination - a real implementation would parse the cursor
 	if cursor != "" {
 		// Find where to continue from
@@ -273,14 +273,14 @@ func (h *DefaultToolsHandler) List(ctx context.Context, cursor string) ([]ToolIn
 				break
 			}
 		}
-		
+
 		if start >= len(tools) {
 			return []ToolInfo{}, "", nil
 		}
-		
+
 		tools = tools[start:]
 	}
-	
+
 	// Limit page size
 	pageSize := 50
 	nextCursor := ""
@@ -288,7 +288,7 @@ func (h *DefaultToolsHandler) List(ctx context.Context, cursor string) ([]ToolIn
 		nextCursor = tools[pageSize-1].Name
 		tools = tools[:pageSize]
 	}
-	
+
 	return tools, nextCursor, nil
 }
 
@@ -297,10 +297,10 @@ func (h *DefaultToolsHandler) Call(ctx context.Context, name string, arguments m
 	h.mu.RLock()
 	handler, ok := h.handlers[name]
 	h.mu.RUnlock()
-	
+
 	if !ok {
 		return ToolResult{}, fmt.Errorf("tool not found: %s", name)
 	}
-	
+
 	return handler(ctx, arguments)
 }

@@ -5,16 +5,20 @@ This example demonstrates how to connect to the `emcee` MCP server using the STD
 ## Usage
 
 ```bash
-go run main.go https://api.weather.gov/openapi.json
+go run main.go
 ```
 
 This example:
 
-1. Starts the `emcee` command as a subprocess with the provided OpenAPI URL
+1. Starts the `emcee` command as a subprocess with the Weather.gov OpenAPI URL
 2. Connects to it using STDIO transport (stdin/stdout/stderr)
 3. Initializes an MCP client over this STDIO connection
 4. Gets and displays server information and capabilities
 5. Lists all available tools on the server
+6. Gets weather data for zip code 80027 (Superior, CO) by:
+   - Calling the getPoints tool to get location data for the zip code
+   - Extracting the forecast URL from the response
+   - Calling the getForecast tool to get the actual weather forecast
 
 ## How it Works
 
