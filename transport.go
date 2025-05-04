@@ -47,11 +47,13 @@ type Transport interface {
 
 // StreamableHTTP implements the MCP Streamable HTTP transport
 type StreamableHTTP struct {
-	baseURL     string
-	httpClient  *http.Client
-	sessionID   string
-	lastEventID string
-	mu          sync.Mutex
+	baseURL         string
+	httpClient      *http.Client
+	sessionID       string
+	lastEventID     string
+	messageEndpoint string  // For 2024-11-05 protocol
+	protocolVersion string  // Detected protocol version
+	mu              sync.Mutex
 }
 
 // STDIO implements the MCP stdio transport
@@ -101,8 +103,17 @@ func (t *StreamableHTTP) SendRequest(ctx context.Context, req *Request) (*Respon
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	// Determine URL to use
+	t.mu.Lock()
+	url := t.baseURL
+	// If using 2024-11-05 protocol and we have a specific message endpoint, use that
+	if t.protocolVersion == "2024-11-05" && t.messageEndpoint != "" {
+		url = t.messageEndpoint
+	}
+	t.mu.Unlock()
+
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL, bytes.NewReader(reqData))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
@@ -130,6 +141,27 @@ func (t *StreamableHTTP) SendRequest(ctx context.Context, req *Request) (*Respon
 		t.mu.Lock()
 		t.sessionID = sessionID
 		t.mu.Unlock()
+	}
+
+	// Store protocol version from Initialize response
+	if req.Method == "initialize" && resp.StatusCode == http.StatusAccepted {
+		var jsonResp Response
+		if err := json.NewDecoder(resp.Body).Decode(&jsonResp); err != nil {
+			return nil, fmt.Errorf("failed to decode JSON response: %w", err)
+		}
+		
+		// Extract protocol version from response
+		if jsonResp.Result != nil {
+			if resultMap, ok := jsonResp.Result.(map[string]interface{}); ok {
+				if version, ok := resultMap["protocolVersion"].(string); ok {
+					t.mu.Lock()
+					t.protocolVersion = version
+					t.mu.Unlock()
+				}
+			}
+		}
+		
+		return &jsonResp, nil
 	}
 
 	// Check response status
@@ -570,6 +602,17 @@ func (t *StreamableHTTP) processSSE(resp *http.Response, expectedID any, eventCh
 
 // handleSSEEvent processes an SSE event and sends the result to the event channel
 func (t *StreamableHTTP) handleSSEEvent(event *SSEEvent, expectedID any, eventChan chan<- any) error {
+	// Handle endpoint event for 2024-11-05 protocol
+	if event.Event == "endpoint" && event.Data != "" {
+		t.mu.Lock()
+		t.messageEndpoint = event.Data
+		t.protocolVersion = "2024-11-05" // Mark as old protocol version
+		t.mu.Unlock()
+		
+		// Don't need to forward this to the event channel, it's for transport setup
+		return nil
+	}
+	
 	if event.Data == "" {
 		return nil // Skip events with no data
 	}

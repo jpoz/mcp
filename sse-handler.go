@@ -170,9 +170,34 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request, session *Sess
 	// Set up notification channel
 	eventChan := s.notificationManager.GetEventChannel(session.ID)
 
+	// Check if we need to support 2024-11-05 protocol version
+	isOldProtocol := s.protocolVersion == "2024-11-05"
+
 	// Send initial comment to establish connection
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
+
+	// For 2024-11-05 protocol, send an endpoint event with the message endpoint
+	if isOldProtocol {
+		// Determine the scheme
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		
+		// Determine the message endpoint
+		messageEndpoint := r.URL.Path // Same endpoint by default
+		if s.config.MessageEndpoint != "" {
+			messageEndpoint = s.config.MessageEndpoint
+		}
+		
+		// Create full URL for the endpoint
+		endpointURL := fmt.Sprintf("%s://%s%s", scheme, r.Host, messageEndpoint)
+		
+		// Send the endpoint event as per 2024-11-05 spec
+		fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpointURL)
+		flusher.Flush()
+	}
 
 	// Create a timer for keepalive
 	ticker := time.NewTicker(30 * time.Second)
@@ -203,7 +228,13 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request, session *Sess
 			}
 
 			// Send as SSE event
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			if isOldProtocol {
+				// For 2024-11-05, always use event: message
+				fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+			} else {
+				// For newer protocols, just send the data
+				fmt.Fprintf(w, "data: %s\n\n", data)
+			}
 			flusher.Flush()
 
 		case <-ticker.C:

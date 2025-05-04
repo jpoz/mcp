@@ -34,11 +34,12 @@ type Task struct {
 func main() {
 	ensureData()
 
-	// Create a new server with specified configuration
+	// Create a new server with specified configuration that supports both protocol versions
+	// and is configured for SSE
 	config := mcp.ServerConfig{
-		ProtocolVersion: "2025-03-2", // Latest MCP protocol version
+		ProtocolVersion: "2025-03-266", // Latest MCP protocol version
 		ServerInfo: mcp.ServerInfo{
-			Name:    "Example MCP Server",
+			Name:    "Example MCP Server (SSE-enabled)",
 			Version: "1.0.0",
 		},
 		Capabilities: map[string]interface{}{
@@ -48,6 +49,12 @@ func main() {
 			"completions": map[string]interface{}{},
 			"logging":     map[string]interface{}{},
 		},
+		// Configure SSE and message endpoints for older clients
+		SSEEndpoint:     "/sse",
+		MessageEndpoint: "/rpc",
+		// Security settings for SSE
+		ValidateOrigins: true,
+		AllowedOrigins:  []string{"null", "localhost", "127.0.0.1"},
 	}
 
 	server := mcp.NewServer(config)
@@ -232,8 +239,37 @@ func main() {
 
 	server.SetToolsHandler(toolsHandler)
 
+	// Start a background goroutine to periodically send notifications
+	// This demonstrates SSE notifications for both protocol versions
+	go func() {
+		counter := 0
+		for {
+			// Send a notification every 10 seconds
+			time.Sleep(10 * time.Second)
+			counter++
+			
+			// Broadcast a notification to all clients
+			server.BroadcastNotification("database/stats", map[string]interface{}{
+				"timestamp": time.Now().Format(time.RFC3339),
+				"message":   fmt.Sprintf("Database heartbeat #%d", counter),
+				"connections": map[string]interface{}{
+					"active": 1,
+					"idle":   2,
+				},
+			})
+			
+			fmt.Printf("Sent database heartbeat notification #%d\n", counter)
+		}
+	}()
+
+	// Print connection information for different protocol versions
+	fmt.Println("Starting MCP server with SSE support:")
+	fmt.Println("  - Latest protocol (2025-03-266): http://localhost:8081/")
+	fmt.Println("  - Old protocol with SSE (2024-11-05):")
+	fmt.Println("    * SSE events endpoint: http://localhost:8081/sse")
+	fmt.Println("    * JSON-RPC endpoint: http://localhost:8081/rpc")
+	
 	// Start the server
-	fmt.Println("Starting MCP server on :8081...")
 	if err := server.Start(":8081"); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

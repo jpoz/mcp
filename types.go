@@ -41,6 +41,11 @@ type Error struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+// Error implements the error interface
+func (e *Error) Error() string {
+	return e.Message
+}
+
 type CallParams struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`

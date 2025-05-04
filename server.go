@@ -1,4 +1,3 @@
-a
 package mcp
 
 import (
@@ -6,6 +5,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,6 +16,9 @@ type Server struct {
 	protocolVersion string
 	capabilities    map[string]any
 	serverInfo      ServerInfo
+	
+	// Server configuration
+	config ServerConfig
 
 	// Handlers
 	resourcesHandler ResourcesHandler
@@ -43,6 +46,12 @@ type ServerConfig struct {
 	ProtocolVersion string
 	ServerInfo      ServerInfo
 	Capabilities    map[string]any
+	
+	// Endpoint configuration
+	SSEEndpoint     string   // Default: ""  (use root path)
+	MessageEndpoint string   // Default: ""  (use root path)
+	ValidateOrigins bool     // Default: true
+	AllowedOrigins  []string // Default: ["null", "localhost", "127.0.0.1"]
 }
 
 type SessionState int
@@ -61,6 +70,14 @@ type Session struct {
 
 // NewServer creates a new MCP server
 func NewServer(config ServerConfig) *Server {
+	// Set defaults for config if not provided
+	if config.AllowedOrigins == nil {
+		config.AllowedOrigins = []string{"null", "localhost", "127.0.0.1"}
+	}
+	if !config.ValidateOrigins {
+		config.ValidateOrigins = true // Default is to validate origins
+	}
+	
 	server := &Server{
 		protocolVersion:     config.ProtocolVersion,
 		serverInfo:          config.ServerInfo,
@@ -69,6 +86,7 @@ func NewServer(config ServerConfig) *Server {
 		notificationManager: NewNotificationManager(),
 		loggingManager:      NewLoggingManager(),
 		slog:                NewNoopLogger(),
+		config:              config,
 	}
 
 	// Copy capabilities
@@ -140,8 +158,47 @@ func (s *Server) SetLogger(logger *slog.Logger) {
 // Start starts the server on the given address
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.HandleHTTP)
+	
+	// If separate endpoints are specified, register them
+	if s.config.SSEEndpoint != "" && s.config.MessageEndpoint != "" && 
+	   s.config.SSEEndpoint != s.config.MessageEndpoint {
+		// Register SSE endpoint
+		mux.HandleFunc(s.config.SSEEndpoint, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			r.URL.Path = s.config.SSEEndpoint // Ensure path is set
+			s.HandleHTTP(w, r)
+		})
+		
+		// Register message endpoint
+		mux.HandleFunc(s.config.MessageEndpoint, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			r.URL.Path = s.config.MessageEndpoint // Ensure path is set
+			s.HandleHTTP(w, r)
+		})
+	} else if s.config.SSEEndpoint == s.config.MessageEndpoint && s.config.SSEEndpoint != "" {
+		// Same endpoint for both
+		mux.HandleFunc(s.config.SSEEndpoint, func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = s.config.SSEEndpoint // Ensure path is set
+			s.HandleHTTP(w, r)
+		})
+	} else {
+		// Default behavior - use root path
+		mux.HandleFunc("/", s.HandleHTTP)
+	}
 
+	// By default, ensure we're binding to localhost for security
+	if !strings.Contains(addr, ":") {
+		addr = "127.0.0.1:" + addr
+	} else if addr == ":" || strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	
 	return http.ListenAndServe(addr, mux)
 }
 
@@ -162,11 +219,29 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	s.slog.Info("Handling request", "method", r.Method, "sessionID", session.ID)
 
-	// Process the request based on method
-	switch r.Method {
-	case http.MethodPost:
+	// Validate Origin header for security
+	if s.config.ValidateOrigins {
+		originHeader := r.Header.Get("Origin")
+		if originHeader != "" {
+			allowed := false
+			for _, origin := range s.config.AllowedOrigins {
+				if strings.Contains(originHeader, origin) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				http.Error(w, "Origin not allowed", http.StatusForbidden)
+				return
+			}
+		}
+	}
+
+	// Process the request based on method and URL path
+	switch {
+	case r.Method == http.MethodPost && (s.config.MessageEndpoint == "" || r.URL.Path == s.config.MessageEndpoint):
 		s.handleJSONRPC(w, r, session)
-	case http.MethodGet:
+	case r.Method == http.MethodGet && (s.config.SSEEndpoint == "" || r.URL.Path == s.config.SSEEndpoint):
 		s.handleSSE(w, r, session)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
