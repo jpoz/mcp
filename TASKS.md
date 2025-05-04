@@ -1,6 +1,6 @@
 # MCP Implementation Tasks
 
-This document outlines the remaining implementation tasks to fully comply with the Model Context Protocol specification v2025-03-266.
+This document outlines the remaining implementation tasks to fully comply with the Model Context Protocol specification v2025-03-26.
 
 ## Core Protocol Implementation
 

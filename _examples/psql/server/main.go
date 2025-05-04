@@ -37,7 +37,7 @@ func main() {
 	// Create a new server with specified configuration that supports both protocol versions
 	// and is configured for SSE
 	config := mcp.ServerConfig{
-		ProtocolVersion: "2025-03-266", // Latest MCP protocol version
+		ProtocolVersion: "2025-03-26", // Latest MCP protocol version
 		ServerInfo: mcp.ServerInfo{
 			Name:    "Example MCP Server (SSE-enabled)",
 			Version: "1.0.0",
@@ -264,7 +264,7 @@ func main() {
 
 	// Print connection information for different protocol versions
 	fmt.Println("Starting MCP server with SSE support:")
-	fmt.Println("  - Latest protocol (2025-03-266): http://localhost:8081/")
+	fmt.Println("  - Latest protocol (2025-03-26): http://localhost:8081/")
 	fmt.Println("  - Old protocol with SSE (2024-11-05):")
 	fmt.Println("    * SSE events endpoint: http://localhost:8081/sse")
 	fmt.Println("    * JSON-RPC endpoint: http://localhost:8081/rpc")

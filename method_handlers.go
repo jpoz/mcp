@@ -24,7 +24,7 @@ func (s *Server) handleInitialize(ctx context.Context, session *Session, params 
 		"server_config_version", s.config.ProtocolVersion)
 
 	// Check if the requested protocol version is supported
-	supportedVersions := []string{"2025-03-266", "2024-11-05"}
+	supportedVersions := []string{"2025-03-26", "2024-11-05"}
 	requestedVersion := initParams.ProtocolVersion
 	
 	// If server is configured for a specific version, use that

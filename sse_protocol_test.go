@@ -138,7 +138,7 @@ func DisableTestSSE2024Protocol(t *testing.T) {
 func DisableTestNewProtocolSSE(t *testing.T) {
 	// Create server with current protocol
 	config := ServerConfig{
-		ProtocolVersion: "2025-03-266",
+		ProtocolVersion: "2025-03-26",
 		ServerInfo: ServerInfo{
 			Name:    "Test Server",
 			Version: "1.0.0",

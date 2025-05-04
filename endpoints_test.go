@@ -11,7 +11,7 @@ import (
 func TestConfigurableEndpoints(t *testing.T) {
 	// Create server with custom endpoints
 	config := ServerConfig{
-		ProtocolVersion: "2025-03-266",
+		ProtocolVersion: "2025-03-26",
 		ServerInfo: ServerInfo{
 			Name:    "Test Server",
 			Version: "1.0.0",
@@ -111,7 +111,7 @@ func TestConfigurableEndpoints(t *testing.T) {
 func TestOriginValidation(t *testing.T) {
 	// Create server with origin validation
 	config := ServerConfig{
-		ProtocolVersion: "2025-03-266",
+		ProtocolVersion: "2025-03-26",
 		ServerInfo: ServerInfo{
 			Name:    "Test Server",
 			Version: "1.0.0",

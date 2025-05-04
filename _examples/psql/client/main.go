@@ -25,12 +25,12 @@ func main() {
 
 	// Determine if using old protocol with SSE endpoints
 	usingSSE := strings.Contains(serverURL, "/rpc") || strings.Contains(serverURL, "/sse")
-	protocolVersion := "2025-03-266"
+	protocolVersion := "2025-03-26"
 	if usingSSE {
 		fmt.Println("Using 2024-11-05 protocol with SSE transport")
 		protocolVersion = "2024-11-05"
 	} else {
-		fmt.Println("Using latest protocol (2025-03-266)")
+		fmt.Println("Using latest protocol (2025-03-26)")
 	}
 
 	// Create the client

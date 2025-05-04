@@ -1,6 +1,6 @@
 # Overview
 
-<Info>**Protocol Revision**: 2025-03-266</Info>
+<Info>**Protocol Revision**: 2025-03-26</Info>
 
 The Model Context Protocol consists of several key components that work together:
 
@@ -98,7 +98,7 @@ batches, but **MUST** support receiving JSON-RPC batches.
 
 ## Auth
 
-MCP provides an [Authorization](/specification/2025-03-266/basic/authorization) framework for use with HTTP.
+MCP provides an [Authorization](/specification/2025-03-26/basic/authorization) framework for use with HTTP.
 Implementations using an HTTP-based transport **SHOULD** conform to this specification,
 whereas implementations using STDIO transport **SHOULD NOT** follow this specification,
 and instead retrieve credentials from the environment.
@@ -114,17 +114,17 @@ to help shape the future of the protocol!
 ## Schema
 
 The full specification of the protocol is defined as a
-[TypeScript schema](https://github.com/modelcontextprotocol/specification/blob/main/schema/2025-03-266/schema.ts).
+[TypeScript schema](https://github.com/modelcontextprotocol/specification/blob/main/schema/2025-03-26/schema.ts).
 This is the source of truth for all protocol messages and structures.
 
 There is also a
-[JSON Schema](https://github.com/modelcontextprotocol/specification/blob/main/schema/2025-03-266/schema.json),
+[JSON Schema](https://github.com/modelcontextprotocol/specification/blob/main/schema/2025-03-26/schema.json),
 which is automatically generated from the TypeScript source of truth, for use with
 various automated tooling.
 
 # Lifecycle
 
-<Info>**Protocol Revision**: 2025-03-266</Info>
+<Info>**Protocol Revision**: 2025-03-26</Info>
 
 The Model Context Protocol (MCP) defines a rigorous lifecycle for client-server
 connections that ensures proper capability negotiation and state management.
@@ -239,11 +239,11 @@ to indicate it is ready to begin normal operations:
 ```
 
 * The client **SHOULD NOT** send requests other than
-  [pings](/specification/2025-03-266/basic/utilities/ping) before the server has responded to the
+  [pings](/specification/2025-03-26/basic/utilities/ping) before the server has responded to the
   `initialize` request.
 * The server **SHOULD NOT** send requests other than
-  [pings](/specification/2025-03-266/basic/utilities/ping) and
-  [logging](/specification/2025-03-266/server/utilities/logging) before receiving the `initialized`
+  [pings](/specification/2025-03-26/basic/utilities/ping) and
+  [logging](/specification/2025-03-26/server/utilities/logging) before receiving the `initialized`
   notification.
 
 #### Version Negotiation
@@ -267,13 +267,13 @@ Key capabilities include:
 
 | Category | Capability     | Description                                                                         |
 | -------- | -------------- | ----------------------------------------------------------------------------------- |
-| Client   | `roots`        | Ability to provide filesystem [roots](/specification/2025-03-266/client/roots)       |
-| Client   | `sampling`     | Support for LLM [sampling](/specification/2025-03-266/client/sampling) requests      |
+| Client   | `roots`        | Ability to provide filesystem [roots](/specification/2025-03-26/client/roots)       |
+| Client   | `sampling`     | Support for LLM [sampling](/specification/2025-03-26/client/sampling) requests      |
 | Client   | `experimental` | Describes support for non-standard experimental features                            |
-| Server   | `prompts`      | Offers [prompt templates](/specification/2025-03-266/server/prompts)                 |
-| Server   | `resources`    | Provides readable [resources](/specification/2025-03-266/server/resources)           |
-| Server   | `tools`        | Exposes callable [tools](/specification/2025-03-266/server/tools)                    |
-| Server   | `logging`      | Emits structured [log messages](/specification/2025-03-266/server/utilities/logging) |
+| Server   | `prompts`      | Offers [prompt templates](/specification/2025-03-26/server/prompts)                 |
+| Server   | `resources`    | Provides readable [resources](/specification/2025-03-26/server/resources)           |
+| Server   | `tools`        | Exposes callable [tools](/specification/2025-03-26/server/tools)                    |
+| Server   | `logging`      | Emits structured [log messages](/specification/2025-03-26/server/utilities/logging) |
 | Server   | `experimental` | Describes support for non-standard experimental features                            |
 
 Capability objects can describe sub-capabilities like:
@@ -300,7 +300,7 @@ mechanism should be used to signal connection termination:
 
 #### stdio
 
-For the stdio [transport](/specification/2025-03-266/basic/transports), the client **SHOULD** initiate
+For the stdio [transport](/specification/2025-03-26/basic/transports), the client **SHOULD** initiate
 shutdown by:
 
 1. First, closing the input stream to the child process (the server)
@@ -313,7 +313,7 @@ exiting.
 
 #### HTTP
 
-For HTTP [transports](/specification/2025-03-266/basic/transports), shutdown is indicated by closing the
+For HTTP [transports](/specification/2025-03-26/basic/transports), shutdown is indicated by closing the
 associated HTTP connection(s).
 
 ## Timeouts
@@ -321,14 +321,14 @@ associated HTTP connection(s).
 Implementations **SHOULD** establish timeouts for all sent requests, to prevent hung
 connections and resource exhaustion. When the request has not received a success or error
 response within the timeout period, the sender **SHOULD** issue a [cancellation
-notification](/specification/2025-03-266/basic/utilities/cancellation) for that request and stop waiting for
+notification](/specification/2025-03-26/basic/utilities/cancellation) for that request and stop waiting for
 a response.
 
 SDKs and other middleware **SHOULD** allow these timeouts to be configured on a
 per-request basis.
 
 Implementations **MAY** choose to reset the timeout clock when receiving a [progress
-notification](/specification/2025-03-266/basic/utilities/progress) corresponding to the request, as this
+notification](/specification/2025-03-26/basic/utilities/progress) corresponding to the request, as this
 implies that work is actually happening. However, implementations **SHOULD** always
 enforce a maximum timeout, regardless of progress notifications, to limit the impact of a
 misbehaving client or server.
@@ -360,7 +360,7 @@ Example initialization error:
 
 # Transports
 
-<Info>**Protocol Revision**: 2025-03-266</Info>
+<Info>**Protocol Revision**: 2025-03-26</Info>
 
 MCP uses JSON-RPC to encode messages. JSON-RPC messages **MUST** be UTF-8 encoded.
 
@@ -536,7 +536,7 @@ act as a cursor within that particular stream.
 ### Session Management
 
 An MCP "session" consists of logically related interactions between a client and a
-server, beginning with the [initialization phase](/specification/2025-03-266/basic/lifecycle). To support
+server, beginning with the [initialization phase](/specification/2025-03-26/basic/lifecycle). To support
 servers which want to establish stateful sessions:
 
 1. A server using the Streamable HTTP transport **MAY** assign a session ID at

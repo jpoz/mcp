@@ -11,7 +11,7 @@ import (
 func TestServerVersionDetection(t *testing.T) {
 	// Create server with default config
 	config := ServerConfig{
-		ProtocolVersion: "2025-03-266",
+		ProtocolVersion: "2025-03-26",
 		ServerInfo: ServerInfo{
 			Name:    "Test Server",
 			Version: "1.0.0",
@@ -23,7 +23,7 @@ func TestServerVersionDetection(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
 	defer ts.Close()
 
-	// Test 2025-03-266 (current version)
+	// Test 2025-03-26 (current version)
 	t.Run("Current Version", func(t *testing.T) {
 		client := NewClient(ts.URL)
 		err := client.Initialize(context.Background(), ClientInfo{
@@ -35,8 +35,8 @@ func TestServerVersionDetection(t *testing.T) {
 		}
 
 		// Check negotiated protocol version
-		if client.GetProtocolVersion() != "2025-03-266" {
-			t.Errorf("Expected protocol version 2025-03-266, got %s", client.GetProtocolVersion())
+		if client.GetProtocolVersion() != "2025-03-26" {
+			t.Errorf("Expected protocol version 2025-03-26, got %s", client.GetProtocolVersion())
 		}
 	})
 
@@ -60,7 +60,7 @@ func TestServerVersionDetection(t *testing.T) {
 
 		client := NewClient(oldTs.URL)
 		
-		// Client should try with 2025-03-266 first, then fall back to 2024-11-05
+		// Client should try with 2025-03-26 first, then fall back to 2024-11-05
 		err := client.Initialize(context.Background(), ClientInfo{
 			Name:    "Test Client",
 			Version: "1.0.0",

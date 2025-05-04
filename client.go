@@ -227,7 +227,7 @@ func (c *Client) Initialize(ctx context.Context, clientInfo ClientInfo) error {
 	}
 
 	// Latest supported protocol versions, in order of preference (latest first)
-	supportedVersions := []string{"2025-03-266", "2024-11-05"}
+	supportedVersions := []string{"2025-03-26", "2024-11-05"}
 	preferredVersion := supportedVersions[0]
 
 	// Prepare initialization request
