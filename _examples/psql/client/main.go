@@ -23,6 +23,16 @@ func main() {
 	serverURL := os.Args[1]
 	fmt.Printf("Connecting to MCP PostgreSQL server at %s\n", serverURL)
 
+	// Determine if using old protocol with SSE endpoints
+	usingSSE := strings.Contains(serverURL, "/rpc") || strings.Contains(serverURL, "/sse")
+	protocolVersion := "2025-03-266"
+	if usingSSE {
+		fmt.Println("Using 2024-11-05 protocol with SSE transport")
+		protocolVersion = "2024-11-05"
+	} else {
+		fmt.Println("Using latest protocol (2025-03-266)")
+	}
+
 	// Create the client
 	client := mcp.NewClientWithOptions(serverURL, mcp.ClientOptions{
 		DefaultTimeout: time.Second * 30,
@@ -69,6 +79,42 @@ func main() {
 	for capability, details := range capabilities {
 		fmt.Printf("  - %s: %v\n", capability, details)
 	}
+	
+	// Set up listening for server notifications
+	fmt.Println("\nListening for server notifications...")
+	// Start listening for messages in a goroutine
+	msgChan, errChan := client.ListenForMessages(ctx)
+	
+	// Handle notifications in a background goroutine
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				// Context cancelled, exit goroutine
+				return
+			case err := <-errChan:
+				if err != nil {
+					fmt.Printf("\n❌ Error receiving notifications: %v\n", err)
+				}
+			case msg := <-msgChan:
+				// Check if it's a notification
+				notification, ok := msg.(*mcp.Notification)
+				if ok {
+					// Print database heartbeat messages
+					if notification.Method == "database/stats" {
+						// Format the notification as JSON for display
+						data, _ := json.MarshalIndent(notification.Params, "", "  ")
+						fmt.Printf("\n📊 Database Status Update Received:\n%s\n", string(data))
+					} else {
+						// Print other notifications
+						fmt.Printf("\n🔔 Notification received: %s\n", notification.Method)
+					}
+				}
+			}
+		}
+	}()
+	
+	fmt.Println("(Database heartbeat notifications will appear every 10 seconds)")
 
 	// Check if tools capability is available
 	_, toolsAvailable := capabilities["tools"]

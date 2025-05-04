@@ -19,12 +19,35 @@ func (s *Server) handleInitialize(ctx context.Context, session *Session, params 
 		return nil, fmt.Errorf("invalid initialization parameters: %w", err)
 	}
 
-	// Check if the requested protocol version is supported
-	// For now, we'll accept what the client requests
-	negotiatedVersion := initParams.ProtocolVersion
+	s.slog.Info("Initialize request", 
+		"requested_version", initParams.ProtocolVersion, 
+		"server_config_version", s.config.ProtocolVersion)
 
-	// In a production implementation, you might check against supported versions
-	// and negotiate a compatible version
+	// Check if the requested protocol version is supported
+	supportedVersions := []string{"2025-03-266", "2024-11-05"}
+	requestedVersion := initParams.ProtocolVersion
+	
+	// If server is configured for a specific version, use that
+	negotiatedVersion := s.config.ProtocolVersion
+	if negotiatedVersion == "" {
+		// Otherwise try to match the client's requested version
+		for _, version := range supportedVersions {
+			if version == requestedVersion {
+				negotiatedVersion = version
+				break
+			}
+		}
+		
+		// Default to the newest version if no match
+		if negotiatedVersion == "" {
+			negotiatedVersion = supportedVersions[0]
+		}
+	}
+
+	s.slog.Info("Protocol negotiation result", "negotiated_version", negotiatedVersion)
+	
+	// Store the negotiated version
+	s.protocolVersion = negotiatedVersion
 
 	// Prepare the result
 	result := struct {

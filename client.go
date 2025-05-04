@@ -227,7 +227,7 @@ func (c *Client) Initialize(ctx context.Context, clientInfo ClientInfo) error {
 	}
 
 	// Latest supported protocol versions, in order of preference (latest first)
-	supportedVersions := []string{"2025-03-26", "2024-11-05"}
+	supportedVersions := []string{"2025-03-266", "2024-11-05"}
 	preferredVersion := supportedVersions[0]
 
 	// Prepare initialization request
@@ -583,7 +583,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 
 	callback := func(evt *SSEEvent) error {
 		logr.Debug("Received SSE event", "event", evt)
-		fmt.Println("Received SSE event:", evt)
+		// Don't print to stdout in production code
 		return nil
 	}
 
@@ -726,3 +726,4 @@ func (c *Client) ListenForMessages(ctx context.Context) (<-chan any, <-chan erro
 
 	return c.transport.ListenForMessages(ctx)
 }
+

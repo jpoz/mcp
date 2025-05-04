@@ -13,7 +13,7 @@ import (
 func main() {
 	// Create a new server with specified configuration
 	config := mcp.ServerConfig{
-		ProtocolVersion: "2025-03-2", // Latest MCP protocol version
+		ProtocolVersion: "2025-03-266", // Latest MCP protocol version
 		ServerInfo: mcp.ServerInfo{
 			Name:    "Example MCP Server",
 			Version: "1.0.0",
