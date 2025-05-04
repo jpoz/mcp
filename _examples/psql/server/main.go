@@ -16,7 +16,7 @@ import (
 // PostgreSQL connection parameters for the docker container
 const (
 	host     = "localhost"
-	port     = 5432
+	port     = 5435
 	user     = "postgres"
 	password = "postgres"
 	dbname   = "example_db"
@@ -42,13 +42,6 @@ func main() {
 			Version: "1.0.0",
 		},
 		Capabilities: map[string]interface{}{
-			"resources": map[string]interface{}{
-				"subscribe":   true,
-				"listChanged": true,
-			},
-			"prompts": map[string]interface{}{
-				"listChanged": true,
-			},
 			"tools": map[string]interface{}{
 				"listChanged": true,
 			},
@@ -60,77 +53,6 @@ func main() {
 	server := mcp.NewServer(config)
 	server.SetLogger(slog.Default())
 	slog.SetLogLoggerLevel(slog.LevelDebug)
-
-	// Set up resource handler
-	resourceHandler := mcp.NewDefaultResourcesHandler()
-
-	// Add some example resources
-	resourceHandler.AddResource(
-		mcp.ResourceInfo{
-			URI:         "file:///example.txt",
-			Name:        "example.txt",
-			Description: "An example text file",
-			MimeType:    "text/plain",
-		},
-		mcp.ResourceContent{
-			URI:      "file:///example.txt",
-			MimeType: "text/plain",
-			Text:     "This is an example text file content.",
-		},
-	)
-
-	resourceHandler.AddResource(
-		mcp.ResourceInfo{
-			URI:         "file:///example.json",
-			Name:        "example.json",
-			Description: "An example JSON file",
-			MimeType:    "application/json",
-		},
-		mcp.ResourceContent{
-			URI:      "file:///example.json",
-			MimeType: "application/json",
-			Text:     `{"key": "value", "nested": {"array": [1, 2, 3]}}`,
-		},
-	)
-
-	server.SetResourcesHandler(resourceHandler)
-
-	// Set up prompts handler
-	promptsHandler := mcp.NewDefaultPromptsHandler()
-
-	// Add an example prompt
-	promptsHandler.AddPrompt(
-		mcp.PromptInfo{
-			Name:        "code_review",
-			Description: "Review code for quality and suggest improvements",
-			Arguments: []mcp.PromptArgument{
-				{
-					Name:        "code",
-					Description: "The code to review",
-					Required:    true,
-				},
-				{
-					Name:        "language",
-					Description: "The programming language",
-					Required:    true,
-				},
-			},
-		},
-		mcp.PromptResult{
-			Description: "Code review prompt",
-			Messages: []mcp.PromptMessage{
-				{
-					Role: "user",
-					Content: mcp.PromptContent{
-						Type: "text",
-						Text: "Please review this {language} code and suggest improvements:\n\n{code}",
-					},
-				},
-			},
-		},
-	)
-
-	server.SetPromptsHandler(promptsHandler)
 
 	// Set up tools handler
 	toolsHandler := mcp.NewDefaultToolsHandler()

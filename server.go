@@ -1,4 +1,4 @@
-// Server provides a server for the Model Context Protocol
+a
 package mcp
 
 import (
